@@ -52,7 +52,7 @@ My main goals are:
    away from solar mean time, since most people actually seem to prefer the distribution
    of light and darkness in the DST periods.
 -  if you compile with -d:useLeapSeconds it uses the leap second data from the
-   Olson timezone files. Don't ask me, what that actually mean...
+   Olson timezone files. Don't ask me, what that actually means...
 -  hopefully correct implementation of the used algorithms.
 -  it should run both on the c and the js backend. The Olson timezone stuff currently
    does not work on the js backend, because i don't know enough javascript to handle
