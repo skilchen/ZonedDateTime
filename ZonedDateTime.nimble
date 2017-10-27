@@ -10,6 +10,7 @@ license       = "MIT"
 # Dependencies
 
 requires "nim >= 0.17.2"
+requires "struct >= 0.1.1"
 
 task tests, "Run some DateTime examples and tests":
   exec "nim c -r ZonedDateTime"

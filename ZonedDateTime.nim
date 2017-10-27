@@ -2826,8 +2826,43 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
     result.offsetKnown = true
 
 import os, ospaths
+type TimeZoneError* = object of Exception
 
-proc astimezone*(dt: DateTime, tzname: string, tztype: TZType): DateTime =
+proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo =
+  case tztype
+  of tzPosix:
+    var tzname = tzname
+    if tzname.toLowerAscii() == "utc":
+      tzname.add("0")
+    var rule = TZRuleData()
+    if not parsetz(tzname, rule):
+      raise newException(TimeZoneError, "can't parse " & tzname & " as a Posix TZ value")
+    var tzinfo = TZInfo(kind: tzPosix, posixData: rule)
+
+    result = tzinfo
+  of tzOlson:
+    var fullpath = ""
+    if fileExists(tzname):
+      fullpath = tzname
+    else:
+      let timezoneDirs = [
+        "/usr/share/zoneinfo",
+        "/usr/local/share/zoneinfo",
+        "/usr/local/etc/zoneinfo"
+      ]
+      for dir in timezoneDirs:
+        if fileExists(dir / tzname):
+          fullpath = dir / tzname
+          break
+    if fullpath == "":
+      raise newException(TimeZoneError, "can't load " & tzname & " as Olson Timezone data. Giving up ...")
+
+    let tz = readTZFile(fullpath)
+    var tzinfo = TZInfo(kind: tzOlson, olsonData: tz)
+    result = tzinfo
+
+
+proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =
   ## convert the DateTime in `dt` into the same time in another timezone
   ## given in `tzname`. `tzname` is either the name of an Olson timezone
   ## or a Posix TZ description as described in the `tzset<https://linux.die.net/man/3/tzset>`__
@@ -2841,39 +2876,36 @@ proc astimezone*(dt: DateTime, tzname: string, tztype: TZType): DateTime =
   ## inspired by the somewhat similar function in Python
   ##
   let utctime = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
-  case tztype
-  of tzPosix:
-    var rule = TZRuleData()
-    if not parsetz(tzname, rule):
-      raise newException(ValueError, "can't parse " & tzname & " as a Posix TZ value")
-    var tzinfo = TZInfo(kind: tzPosix, posixData: rule)
-
-    result =  localFromTime(utctime, tzinfo)
-  of tzOlson:
-    var fullpath = ""
-    if fileExists(tzname):
-      fullpath = tzname
-    else:
-      let timezoneDirs = [
-        "/usr/local/tzdir/etc", # my private copy of the current Olson database
-        "/usr/local/share/zoneinfo",
-        "/usr/local/etc/zoneinfo"
-      ]
-      for dir in timezoneDirs:
-        if fileExists(dir / tzname):
-          fullpath = dir / tzname
-          break
-    if fullpath == "":
-      stderr.write("can't load " & tzname & "as Olson Timezone data. Giving up ...")
-      return dt
-    let tz = readTZFile(fullpath)
-    var tzinfo = TZInfo(kind: tzOlson, olsonData: tz)
+  try:
+    let tzinfo = getTZInfo(tzname, tztype)
     result = localFromTime(utctime, tzinfo)
-  else:
+  except:
+    stderr.write(getCurrentExceptionMsg())
+    stderr.write("\L")
     result = fromTime(utctime)
 
 
+template asUTC*(dt: DateTime): DateTime =
+  ## return a `DateTime` with the currently stored instant
+  ## converted to UTC time.
+  ##
+  dt.astimezone("UTC0", tzPosix)
 
+
+proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =
+  ## return a `DateTime` with the same date/time as `dt` but with the timezone settings
+  ## changed to `tzname` of zone type `tztype`
+  ##
+  try:
+    let tzinfo = getTZInfo(tzname, tztype)
+    result = localFromTime(toUnixEpochSeconds(dt), tzinfo)
+    let abbrev = result.zoneAbbrev
+    result = result + seconds(result.utcoffset - int(result.isDST) * 3600)
+    result.zoneAbbrev = abbrev
+  except:
+    stderr.write(getCurrentExceptionMsg())
+    stderr.write("\L")
+    result = dt
 
 
 when defined(js):
