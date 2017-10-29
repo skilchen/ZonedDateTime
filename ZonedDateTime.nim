@@ -69,8 +69,12 @@ import math
 from times import epochTime
 
 import streams
-import struct
-import options
+
+when not defined(js):
+  import struct
+  import os, ospaths
+
+type TimeZoneError* = object of Exception
 
 type
   TZFileHeader* = object ## Header of a compiled Olson TZ file
@@ -2697,212 +2701,212 @@ proc find_transition*(tz: ptr TZRuleData, dt: DateTime): DstTransitions =
   ##
   result = getTransitions(tz, dt.year)
 
+when not defined(js):
+  proc readTZFile*(filename: string): TZFileContent =
+    ## reads a compiled Olson TZ Database file
+    ##
+    ## adapted from similar code in Pythons
+    ## `dateutil <https://pypi.python.org/pypi/python-dateutil>`__
+    ## package and in the `IANA Time Zone database <https://www.iana.org/time-zones>`__
+    ##
+    var data = readFile(filename)
+    var fp = newStringStream($data)
 
-proc readTZFile*(filename: string): TZFileContent =
-  ## reads a compiled Olson TZ Database file
-  ##
-  ## adapted from similar code in Pythons
-  ## `dateutil <https://pypi.python.org/pypi/python-dateutil>`__
-  ## package and in the `IANA Time Zone database <https://www.iana.org/time-zones>`__
-  ##
-  var data = readFile(filename)
-  var fp = newStringStream($data)
+    result.transitionData = @[]
+    result.posixTZ = "UTC"
 
-  result.transitionData = @[]
-  result.posixTZ = "UTC"
+    var v2 = false
 
-  var v2 = false
+    proc readBlock(fp: StringStream, blockNr = 1): TZFileData =
+      var magic = fp.readStr(4)
 
-  proc readBlock(fp: StringStream, blockNr = 1): TZFileData =
-    var magic = fp.readStr(4)
+      if $magic != "TZif":
+        raise newException(ValueError, $filename & " is not a timezone file")
 
-    if $magic != "TZif":
-      raise newException(ValueError, $filename & " is not a timezone file")
+      let version = fp.readInt8() - ord('0')
+      if version == 2:
+        v2 = true
 
-    let version = fp.readInt8() - ord('0')
-    if version == 2:
-      v2 = true
+      discard fp.readStr(15)
 
-    discard fp.readStr(15)
+      # from man 5 tzfile
+      #[
+        Timezone information files begin with a 44-byte header structured as follows:
+              *  The magic four-byte sequence "TZif" identifying this as a timezone information file.
+              *  A single character identifying the version of the file's format: either an ASCII NUL ('\0') or a '2' (0x32).
+              *  Fifteen bytes containing zeros reserved for future use.
+              *  Six four-byte values of type long, written in a "standard" byte order (the high-order byte of the value is  written  first).   These
+                  values are, in order:
+                  tzh_ttisgmtcnt
+                        The number of UTC/local indicators stored in the file.
+                  tzh_ttisstdcnt
+                        The number of standard/wall indicators stored in the file.
+                  tzh_leapcnt
+                        The number of leap seconds for which data is stored in the file.
+                  tzh_timecnt
+                        The number of "transition times" for which data is stored in the file.
+                  tzh_typecnt
+                        The number of "local time types" for which data is stored in the file (must not be zero).
+                  tzh_charcnt
+                        The number of characters of "timezone abbreviation strings" stored in the file.
+      ]#
 
-    # from man 5 tzfile
-    #[
-      Timezone information files begin with a 44-byte header structured as follows:
-            *  The magic four-byte sequence "TZif" identifying this as a timezone information file.
-            *  A single character identifying the version of the file's format: either an ASCII NUL ('\0') or a '2' (0x32).
-            *  Fifteen bytes containing zeros reserved for future use.
-            *  Six four-byte values of type long, written in a "standard" byte order (the high-order byte of the value is  written  first).   These
-                values are, in order:
-                tzh_ttisgmtcnt
-                      The number of UTC/local indicators stored in the file.
-                tzh_ttisstdcnt
-                      The number of standard/wall indicators stored in the file.
-                tzh_leapcnt
-                      The number of leap seconds for which data is stored in the file.
-                tzh_timecnt
-                      The number of "transition times" for which data is stored in the file.
-                tzh_typecnt
-                      The number of "local time types" for which data is stored in the file (must not be zero).
-                tzh_charcnt
-                      The number of characters of "timezone abbreviation strings" stored in the file.
-    ]#
+      var rData = TZFileData()
 
-    var rData = TZFileData()
+      rData.version = version
 
-    rData.version = version
-
-    var hdr = TZFileHeader()
-    hdr.magic = magic
-    if v2 and blockNr == 1:
-      hdr.version = 0
-    else:
-      hdr.version = 2
-    hdr.ttisgmtcnt = unpack(">i", fp.readStr(4))[0].getInt()
-    hdr.ttisstdcnt = unpack(">i", fp.readStr(4))[0].getInt()
-    hdr.leapcnt = unpack(">i", fp.readStr(4))[0].getInt()
-    hdr.timecnt = unpack(">i", fp.readStr(4))[0].getInt()
-    hdr.typecnt = unpack(">i", fp.readStr(4))[0].getInt()
-    hdr.charcnt = unpack(">i", fp.readStr(4))[0].getInt()
-
-    rData.header = hdr
-
-    #[
-      The  above  header  is  followed  by tzh_timecnt four-byte values of type long,
-      sorted in ascending order. These values are written in "standard" byte order.
-      Each is used as a transition time (as returned by time(2)) at which the rules
-      for computing local time  change.
-    ]#
-
-    var transition_times: seq[BiggestInt] = @[]
-    for i in 1..hdr.timecnt:
-      if blockNr == 1:
-        transition_times.add(unpack(">i", fp.readStr(4))[0].getInt)
+      var hdr = TZFileHeader()
+      hdr.magic = magic
+      if v2 and blockNr == 1:
+        hdr.version = 0
       else:
-        transition_times.add(unpack(">q", fp.readStr(8))[0].getQuad)
-    rData.transitionTimes = transition_times
+        hdr.version = 2
+      hdr.ttisgmtcnt = unpack(">i", fp.readStr(4))[0].getInt()
+      hdr.ttisstdcnt = unpack(">i", fp.readStr(4))[0].getInt()
+      hdr.leapcnt = unpack(">i", fp.readStr(4))[0].getInt()
+      hdr.timecnt = unpack(">i", fp.readStr(4))[0].getInt()
+      hdr.typecnt = unpack(">i", fp.readStr(4))[0].getInt()
+      hdr.charcnt = unpack(">i", fp.readStr(4))[0].getInt()
 
-    #[
-      Next come tzh_timecnt one-byte values of type unsigned
-      char; each one tells which of the different types of
-      ``local time`` types described in the file is associated
-      with the same-indexed transition time. These values
-      serve as indices into an array of ttinfo structures that
-      appears next in the file.
-    ]#
+      rData.header = hdr
 
-    var transition_idx: seq[int] = @[]
-    for i in 1..hdr.timecnt:
-      transition_idx.add(fp.readUInt8().int)
-    rData.timeInfoIdx = transition_idx
+      #[
+        The  above  header  is  followed  by tzh_timecnt four-byte values of type long,
+        sorted in ascending order. These values are written in "standard" byte order.
+        Each is used as a transition time (as returned by time(2)) at which the rules
+        for computing local time  change.
+      ]#
 
-    #[
-      Each structure is written as a four-byte value for tt_gmtoff of type long,
-      in a standard byte order, followed by a one-byte value for
-      tt_isdst and a one-byte value for tt_abbrind.  In each structure,
-      tt_gmtoff gives the number of seconds to be added  to  UTC,
-      tt_isdst tells whether tm_isdst should be set by localtime(3), and
-      tt_abbrind serves as an index into the array of timezone abbreviation
-      characters that follow the ttinfo structure(s) in the file.
-    ]#
-    var ttinfos: seq[TimeTypeInfo] = @[]
-    var abbrIdx: seq[int] = @[]
+      var transition_times: seq[BiggestInt] = @[]
+      for i in 1..hdr.timecnt:
+        if blockNr == 1:
+          transition_times.add(unpack(">i", fp.readStr(4))[0].getInt)
+        else:
+          transition_times.add(unpack(">q", fp.readStr(8))[0].getQuad)
+      rData.transitionTimes = transition_times
 
-    for i in 1..hdr.typecnt:
-      var tmp: TimeTypeInfo
-      tmp.gmtoff = unpack(">i", fp.readStr(4))[0].getInt()
-      tmp.isdst = fp.readInt8()
-      abbrIdx.add(fp.readUInt8().int)
-      ttinfos.add(tmp)
+      #[
+        Next come tzh_timecnt one-byte values of type unsigned
+        char; each one tells which of the different types of
+        ``local time`` types described in the file is associated
+        with the same-indexed transition time. These values
+        serve as indices into an array of ttinfo structures that
+        appears next in the file.
+      ]#
 
-    var timezone_abbreviations = fp.readStr(hdr.charcnt)
+      var transition_idx: seq[int] = @[]
+      for i in 1..hdr.timecnt:
+        transition_idx.add(fp.readUInt8().int)
+      rData.timeInfoIdx = transition_idx
 
-    for i in 0 .. high(abbrIdx):
-      let x = abbrIdx[i]
-      ttinfos[i].abbrev = $timezone_abbreviations[x .. find(timezone_abbreviations, "\0", start=x) - 1]
+      #[
+        Each structure is written as a four-byte value for tt_gmtoff of type long,
+        in a standard byte order, followed by a one-byte value for
+        tt_isdst and a one-byte value for tt_abbrind.  In each structure,
+        tt_gmtoff gives the number of seconds to be added  to  UTC,
+        tt_isdst tells whether tm_isdst should be set by localtime(3), and
+        tt_abbrind serves as an index into the array of timezone abbreviation
+        characters that follow the ttinfo structure(s) in the file.
+      ]#
+      var ttinfos: seq[TimeTypeInfo] = @[]
+      var abbrIdx: seq[int] = @[]
 
-    #[
-      Then there are tzh_leapcnt pairs of four-byte values, written in standard byte order;
-      the first value of each pair gives the time (as returned by time(2)) at which a leap
-      second occurs;
-      the second gives the total number of leap seconds to be applied after the given
-      time. The pairs of values are sorted in ascending order by time.
-    ]#
-    var leapSecInfos: seq[LeapSecondInfo] = @[]
-    for i in 1..hdr.leapcnt:
-      var tmp: LeapSecondInfo
-      if blockNr == 1:
-        tmp.transitionTime = unpack(">i", fp.readStr(4))[0].getInt()
+      for i in 1..hdr.typecnt:
+        var tmp: TimeTypeInfo
+        tmp.gmtoff = unpack(">i", fp.readStr(4))[0].getInt()
+        tmp.isdst = fp.readInt8()
+        abbrIdx.add(fp.readUInt8().int)
+        ttinfos.add(tmp)
+
+      var timezone_abbreviations = fp.readStr(hdr.charcnt)
+
+      for i in 0 .. high(abbrIdx):
+        let x = abbrIdx[i]
+        ttinfos[i].abbrev = $timezone_abbreviations[x .. find(timezone_abbreviations, "\0", start=x) - 1]
+
+      #[
+        Then there are tzh_leapcnt pairs of four-byte values, written in standard byte order;
+        the first value of each pair gives the time (as returned by time(2)) at which a leap
+        second occurs;
+        the second gives the total number of leap seconds to be applied after the given
+        time. The pairs of values are sorted in ascending order by time.
+      ]#
+      var leapSecInfos: seq[LeapSecondInfo] = @[]
+      for i in 1..hdr.leapcnt:
+        var tmp: LeapSecondInfo
+        if blockNr == 1:
+          tmp.transitionTime = unpack(">i", fp.readStr(4))[0].getInt()
+        else:
+          tmp.transitionTime = unpack(">q", fp.readStr(8))[0].getQuad()
+        tmp.correction = unpack(">i", fp.readStr(4))[0].getInt()
+        leapSecInfos.add(tmp)
+
+      rData.leapSecondInfos = leapSecInfos
+
+      #[
+        Then there are tzh_ttisstdcnt standard/wall indicators, each stored as a one-byte value;
+        they tell whether the transition times associated with local time types were specified
+        as standard time or wall clock time, and are used when a timezone file is used in
+        handling POSIX-style timezone environment variables.
+      ]#
+
+      for i in 1..hdr.ttisstdcnt:
+        let isStd = fp.readInt8()
+        if isStd == 1:
+          ttinfos[i - 1].isStd = true
+        else:
+          ttinfos[i - 1].isStd = false
+
+      #[
+        Finally, there are tzh_ttisgmtcnt UTC/local indicators, each stored as a one-byte value;
+        they tell whether the transition times associated with local time types were specified as
+        UTC or local time, and are used when a timezone file is used in handling POSIX-style time‐
+        zone environment variables.
+      ]#
+      for i in 1..hdr.ttisgmtcnt:
+        let isGMT = fp.readInt8()
+        if isGMT == 1:
+          ttinfos[i - 1].isGmt = true
+        else:
+          ttinfos[i - 1].isGmt = false
+
+      rData.timeInfos = ttinfos
+      result = rData
+
+    result.transitionData.add(readBlock(fp, 1))
+    if v2:
+      result.version = 2
+      result.transitionData.add(readBlock(fp, 2))
+      discard fp.readLine()
+      result.posixTZ = fp.readLine()
+    fp.close()
+
+
+  proc find_transition*(tdata: TZFileData, epochSeconds: int): TransitionInfo =
+    ## finds the closest DST transition before a time expressed
+    ## in seconds since 1970-01-01T00:00:00 UTC.
+    ##
+    let d = tdata.transitionTimes
+    var lo = 0
+    var hi = len(d)
+    while lo < hi:
+      let mid = (lo + hi) div 2
+      if epochSeconds < d[mid]:
+        hi = mid
       else:
-        tmp.transitionTime = unpack(">q", fp.readStr(8))[0].getQuad()
-      tmp.correction = unpack(">i", fp.readStr(4))[0].getInt()
-      leapSecInfos.add(tmp)
+        lo = mid + 1
+    var idx = lo - 1
+    if idx < 0:
+      idx = 0
+    result.time = d[idx]
+    result.data = tdata.timeInfos[tdata.timeInfoIdx[idx]]
 
-    rData.leapSecondInfos = leapSecInfos
-
-    #[
-      Then there are tzh_ttisstdcnt standard/wall indicators, each stored as a one-byte value;
-      they tell whether the transition times associated with local time types were specified
-      as standard time or wall clock time, and are used when a timezone file is used in
-      handling POSIX-style timezone environment variables.
-    ]#
-
-    for i in 1..hdr.ttisstdcnt:
-      let isStd = fp.readInt8()
-      if isStd == 1:
-        ttinfos[i - 1].isStd = true
-      else:
-        ttinfos[i - 1].isStd = false
-
-    #[
-      Finally, there are tzh_ttisgmtcnt UTC/local indicators, each stored as a one-byte value;
-      they tell whether the transition times associated with local time types were specified as
-      UTC or local time, and are used when a timezone file is used in handling POSIX-style time‐
-      zone environment variables.
-    ]#
-    for i in 1..hdr.ttisgmtcnt:
-      let isGMT = fp.readInt8()
-      if isGMT == 1:
-        ttinfos[i - 1].isGmt = true
-      else:
-        ttinfos[i - 1].isGmt = false
-
-    rData.timeInfos = ttinfos
-    result = rData
-
-  result.transitionData.add(readBlock(fp, 1))
-  if v2:
-    result.version = 2
-    result.transitionData.add(readBlock(fp, 2))
-    discard fp.readLine()
-    result.posixTZ = fp.readLine()
-  fp.close()
-
-
-proc find_transition*(tdata: TZFileData, epochSeconds: int): TransitionInfo =
-  ## finds the closest DST transition before a time expressed
-  ## in seconds since 1970-01-01T00:00:00 UTC.
-  ##
-  let d = tdata.transitionTimes
-  var lo = 0
-  var hi = len(d)
-  while lo < hi:
-    let mid = (lo + hi) div 2
-    if epochSeconds < d[mid]:
-      hi = mid
-    else:
-      lo = mid + 1
-  var idx = lo - 1
-  if idx < 0:
-    idx = 0
-  result.time = d[idx]
-  result.data = tdata.timeInfos[tdata.timeInfoIdx[idx]]
-
-proc find_transition*(tdata: TZFiledata, dt: DateTime): TransitionInfo =
-  ## finds the closest DST transition before `dt`
-  ##
-  var seconds = toUnixEpochSeconds(dt)
-  let utc_seconds = seconds + float64(dt.utcOffset - int(dt.isDST) * 3600)
-  result = find_transition(tdata, int(utc_seconds))
+  proc find_transition*(tdata: TZFiledata, dt: DateTime): TransitionInfo =
+    ## finds the closest DST transition before `dt`
+    ##
+    var seconds = toUnixEpochSeconds(dt)
+    let utc_seconds = seconds + float64(dt.utcOffset - int(dt.isDST) * 3600)
+    result = find_transition(tdata, int(utc_seconds))
 
 
 # from localtime.c
@@ -2969,18 +2973,21 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
   if not isNil zoneInfo:
     case zoneInfo.kind
     of tzOlson:
-      var odata = zoneInfo[].olsonData
-      var idx = 0
-      if odata.version == 2:
-        idx = 1
-      let trdata = odata.transitionData[idx]
-      let ti = find_transition(trdata, int(t))
-      timeOffset = ti.data.gmtoff
-      utcOffset = timeOffset
-      if ti.data.isdst == 1:
-        utcOffset -= 3600
-        isDST = true
-      result.zoneAbbrev = ti.data.abbrev
+      when not defined(js):
+        var odata = zoneInfo[].olsonData
+        var idx = 0
+        if odata.version == 2:
+          idx = 1
+        let trdata = odata.transitionData[idx]
+        let ti = find_transition(trdata, int(t))
+        timeOffset = ti.data.gmtoff
+        utcOffset = timeOffset
+        if ti.data.isdst == 1:
+          utcOffset -= 3600
+          isDST = true
+        result.zoneAbbrev = ti.data.abbrev
+      else:
+        raise newException(TimeZoneError, "Olson Timezone files not supported on js backend")
     of tzPosix:
       var pdata = zoneInfo.posixData
       let ti = find_transition(addr(pdata), float64(t))
@@ -3089,8 +3096,6 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
   else:
     result.offsetKnown = true
 
-import os, ospaths
-type TimeZoneError* = object of Exception
 
 proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo =
   case tztype
@@ -3105,25 +3110,28 @@ proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo =
 
     result = tzinfo
   of tzOlson:
-    var fullpath = ""
-    if fileExists(tzname):
-      fullpath = tzname
+    when defined(js):
+      raise newException(TimeZoneError, "Olson timezone files not supported on js backend")
     else:
-      let timezoneDirs = [
-        "/usr/share/zoneinfo",
-        "/usr/local/share/zoneinfo",
-        "/usr/local/etc/zoneinfo"
-      ]
-      for dir in timezoneDirs:
-        if fileExists(dir / tzname):
-          fullpath = dir / tzname
-          break
-    if fullpath == "":
-      raise newException(TimeZoneError, "can't load " & tzname & " as Olson Timezone data. Giving up ...")
+      var fullpath = ""
+      if fileExists(tzname):
+        fullpath = tzname
+      else:
+        let timezoneDirs = [
+          "/usr/share/zoneinfo",
+          "/usr/local/share/zoneinfo",
+          "/usr/local/etc/zoneinfo"
+        ]
+        for dir in timezoneDirs:
+          if fileExists(dir / tzname):
+            fullpath = dir / tzname
+            break
+      if fullpath == "":
+        raise newException(TimeZoneError, "can't load " & tzname & " as Olson Timezone data. Giving up ...")
 
-    let tz = readTZFile(fullpath)
-    var tzinfo = TZInfo(kind: tzOlson, olsonData: tz)
-    result = tzinfo
+      let tz = readTZFile(fullpath)
+      var tzinfo = TZInfo(kind: tzOlson, olsonData: tz)
+      result = tzinfo
 
 
 proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =
@@ -3145,8 +3153,11 @@ proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTi
     result = localFromTime(utctime, tzinfo)
     result.microsecond = dt.microsecond
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
+    when defined(js):
+      echo getCurrentExceptionMsg()
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
     result = fromTime(utctime)
 
 
@@ -3161,9 +3172,12 @@ proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime =
     result = localFromTime(utctime, tzinfo)
     result.microsecond = dt.microsecond
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
-    result = fromTime(utctime)
+    when defined(js):
+      echo getCurrentExceptionMsg()
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
+
 
 proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
   ## convert the ZonedDateTime in `zdt` into the same time in
@@ -3178,8 +3192,11 @@ proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
     result.datetime.microsecond = dt.microsecond
     result.tzinfo = tzinfo
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
+    when defined(js):
+      echo getCurrentExceptionMsg()
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
     result.datetime = fromTime(utctime)
     result.tzinfo = getTZInfo("UTC0", tzPosix)
 
@@ -3212,33 +3229,36 @@ proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo): TZInfoData =
   if not isNil zoneInfo:
     case zoneInfo.kind
     of tzOlson:
-      var odata = zoneInfo[].olsonData
-      var idx = 0
-      if odata.version == 2:
-        idx = 1
-      let trdata = odata.transitionData[idx]
-      let ti = find_transition(trdata, int(t))
-      result.utcOffset = -ti.data.gmtoff
-      if ti.data.isdst == 1:
-        result.utcOffset += 3600
-        result.isDST = true
-      result.zoneAbbrev = ti.data.abbrev
+      when defined(js):
+        raise newException(TimeZoneError, "Olson timezone files not supported on js backend")
+      else:
+        var odata = zoneInfo[].olsonData
+        var idx = 0
+        if odata.version == 2:
+          idx = 1
+        let trdata = odata.transitionData[idx]
+        let ti = find_transition(trdata, int(t))
+        result.utcOffset = -ti.data.gmtoff
+        if ti.data.isdst == 1:
+          result.utcOffset += 3600
+          result.isDST = true
+        result.zoneAbbrev = ti.data.abbrev
     of tzPosix:
       var pdata = zoneInfo.posixData
       let ti = find_transition(addr(pdata), float64(t))
       if isNil(ti):
         # no DST transition rule found
-        result.utcOffset = -pdata.utcoffset
+        result.utcOffset = pdata.utcoffset
         result.isDST = false
         result.zoneAbbrev = pdata.stdName
       else:
         # we found a DST transition rule
         if t.float64 >= toUnixEpochSeconds(ti.dstStart) and t.float64 < toTime(ti.dstEnd):
-          result.utcOffset = -pdata.dstOffset
+          result.utcOffset = pdata.utcOffset
           result.isDST = true
           result.zoneAbbrev = pdata.dstName
         else:
-          result.utcOffset = -pdata.utcOffset
+          result.utcOffset = pdata.utcOffset
           result.isDST = false
           result.zoneAbbrev = pdata.stdName
 
@@ -3260,8 +3280,13 @@ proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateT
     let tzinfo = getTZInfo(tzname, tztype)
     result = setTimeZone(dt, tzinfo)
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
+    when defined(js):
+      # to silence a warning abount GC-unsafety
+      # echo  getCurrentExceptionMsg()
+      echo "failed to setTimezone to " & tzname
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
     result = dt
 
 proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix): ZonedDateTime =
@@ -3274,8 +3299,11 @@ proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix):
     result.datetime = setTimeZone(dt, tzinfo)
     result.tzinfo = tzinfo
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
+    when defined(js):
+      echo getCurrentExceptionMsg()
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
     result = zdt
 
 
@@ -3288,13 +3316,17 @@ proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
     result.datetime = setTimeZone(dt, tzinfo)
     result.tzinfo = tzinfo
   except:
-    stderr.write(getCurrentExceptionMsg())
-    stderr.write("\L")
+    when defined(js):
+      # echo(getCurrentExceptionMsg())
+      echo "failed to setTimezone"
+    else:
+      stderr.write(getCurrentExceptionMsg())
+      stderr.write("\L")
     result = zdt
 
 
 when defined(js):
-  proc paramStr(n: int): string =
+  proc paramStr*(n: int): string =
     var args {.importc.}: seq[cstring]
     {.emit: "`args` = process.argv;" .}
     return $args[n+1]
