@@ -3285,10 +3285,7 @@ proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
   ##
   let dt = zdt.datetime
   try:
-    result.datetime = localFromTime(toUnixEpochSeconds(dt), tzinfo)
-    let abbrev = result.datetime.zoneAbbrev
-    result = result + seconds(result.datetime.utcoffset - int(result.datetime.isDST) * 3600)
-    result.datetime.zoneAbbrev = abbrev
+    result.datetime = setTimeZone(dt, tzinfo)
     result.tzinfo = tzinfo
   except:
     stderr.write(getCurrentExceptionMsg())
