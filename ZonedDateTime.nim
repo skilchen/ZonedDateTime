@@ -187,7 +187,7 @@ type
 const
   OneDay = 86400
   UnixEpochSeconds = 62135683200
-  UnixEpochDays = 719468
+  UnixEpochDays = 719163
   GregorianEpochSeconds = 1 * 24 * 60 * 60
 
 
@@ -832,9 +832,10 @@ proc fromDays*(days: int64): DateTime =
   ## get a DateTime instance from the number of days
   ## since the Unix epoch 1970-01-01
   ##
-  ## algorithm from `<http://howardhinnant.github.io/date/date.html>`__
+  ## algorithm from `<http://howardhinnant.github.io/date/date_algorithms.html>`__
   ##
-  let z = days + UnixEpochDays
+  let EpochShift = 719468 # to shift 1970-01-01 to 0000-03-01
+  let z = days + EpochShift
   let era = (if z >= 0: z else: z - 146096) div 146097
   let doe = z - era * 146097
   let yoe = (doe - doe div 1460 + doe div 36524  - doe div 146096) div 365
@@ -858,8 +859,23 @@ proc toTimeStamp*(dt: DateTime): TimeStamp =
   result.seconds += dt.second.float64
   result.microseconds = dt.microsecond.float64
 
+
 proc toTimeStamp*(zdt: ZonedDateTime): TimeStamp =
   result = toTimeStamp(zdt.datetime)
+
+
+when defined(useLeapSeconds):
+  proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int {.gcsafe.}
+
+
+proc toUTCTimeStamp*(zdt: ZonedDateTime): TimeStamp =
+  let dt = zdt.datetime
+  result = toTimeStamp(dt)
+  result.seconds -= UnixEpochSeconds.float64
+  result.seconds += float64(dt.utcoffset - int(dt.isDST) * 3600)
+  when defined(useLeapSeconds):
+    if zdt.second != 60:
+      result.seconds += float64(find_leapseconds(zdt.tzinfo, result.seconds))
 
 
 proc toTimeDelta*(dt: DateTime): TimeDelta =
@@ -1379,6 +1395,17 @@ proc toTime*(dt: DateTime): float64 =
   result += dt.microsecond.float64 / 1e6
 
 
+proc toUTCTime*(dt: DateTime): float64 =
+  result = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
+
+
+proc toUTCTime*(zdt: ZonedDateTime): float64 =
+  let dt = zdt.datetime
+  result = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
+  when defined(useLeapSeconds):
+    if zdt.second != 60:
+      result += float64(find_leapseconds(zdt.tzinfo, result))
+
 proc fromTime*(t: float64): DateTime =
   ## get a DateTime from `t` number of
   ## wall clock seconds since the start
@@ -1403,16 +1430,18 @@ proc `-`*(x, y: DateTime): TimeDelta =
   ## of the proleptic Gregorian calendar.)
   ##
   let tdiff = toTimeStamp(x) - toTimeStamp(y)
-  result = initTimeDelta(seconds = tdiff.seconds, microseconds=tdiff.microseconds)
+  result = initTimeDelta(seconds = tdiff.seconds, microseconds = tdiff.microseconds)
 
 
 proc `-`*(x, y: ZonedDateTime): TimeDelta =
-  result = x.datetime.toUTC() - y.datetime.toUTC()
+  let tdiff = toUTCTimeStamp(x) - toUTCTimeStamp(y)
+  result = initTimeDelta(seconds = tdiff.seconds, microseconds = tdiff.microseconds)
 
 template transferOffsetInfo(dt: DateTime) =
   result.offsetKnown = dt.offsetKnown
   result.utcoffset = dt.utcoffset
   result.isDST = dt.isDST
+
 
 proc `+`*(dt: DateTime, td: TimeDelta): DateTime =
   ## add a TimeDelta `td` (represented as a number of
@@ -1433,8 +1462,7 @@ proc `+`*(zdt: ZonedDateTime, td: TimeDelta): ZonedDateTime =
   ## days, seconds and microseconds) to a ZonedDateTime
   ## value in `zdt`
   ##
-  var dt = zdt.datetime
-  var s: TimeStamp = dt.toTimeStamp()
+  var s: TimeStamp = zdt.toUTCTimeStamp()
   let ts = td.toTimeStamp()
   s.seconds += ts.seconds
   s.microseconds += ts.microseconds
@@ -1473,7 +1501,8 @@ proc `+`*(dt: DateTime, ti: TimeInterval): DateTime =
   let year = quotient(totalMonths, 12)
   let month = modulo(totalMonths, 12) + 1
   let day = min(getDaysInMonth(year, month), dt.day)
-  let ordinal = float64(toOrdinalFromYMD(year, month, day)) + ti.days
+  var ordinal = float64(toOrdinalFromYMD(year, month, day)) + ti.days
+  ordinal -= UnixEpochDays
 
   var seconds = float64(ordinal) * OneDay
   seconds += (dt.hour.float64 + ti.hours) * 3600.0
@@ -1487,7 +1516,7 @@ proc `+`*(dt: DateTime, ti: TimeInterval): DateTime =
     seconds += float64(quotient(microseconds, 1_000_000))
     microseconds = float64(modulo(microseconds, 1_000_000))
 
-  result = fromTime(seconds - float64(UnixEpochSeconds))
+  result = fromUnixEpochSeconds(seconds) # - float64(UnixEpochSeconds))
   result.microsecond = microseconds.int
   transferOffsetInfo(dt)
 
@@ -1495,18 +1524,25 @@ proc `+`*(dt: DateTime, ti: TimeInterval): DateTime =
 proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
   ## adds ``ti`` to DateTime ``zdt``.
   ##
-  let dt = zdt.datetime
+  let dt = zdt.datetime.toUTC()
   let totalMonths = dt.year.float64 * 12 + dt.month.float64 - 1 + ti.years * 12 + ti.months
   let year = quotient(totalMonths, 12)
   let month = modulo(totalMonths, 12) + 1
   let day = min(getDaysInMonth(year, month), dt.day)
-  let ordinal = float64(toOrdinalFromYMD(year, month, day)) + ti.days
-
+  var ordinal = float64(toOrdinalFromYMD(year, month, day)) + ti.days
+  ordinal -= UnixEpochDays
   var seconds = float64(ordinal) * OneDay
+
+  when defined(useLeapSeconds):
+    seconds += float64(find_leapseconds(zdt.tzinfo, seconds))
+    if zdt.second == 60:
+      seconds -= 1.0
+      echo "seconds: ", seconds
+
   seconds += (dt.hour.float64 + ti.hours) * 3600.0
   seconds += (dt.minute.float64 + ti.minutes) * 60.0
   seconds += (dt.second.float64 + ti.seconds)
-  seconds += float64(dt.utcoffset - int(dt.isDST) * 3600)
+
   var microseconds = dt.microsecond.float64 + ti.microseconds
   if microseconds < 0:
     seconds -= float64(quotient(microseconds, -1_000_000) + 1)
@@ -1515,7 +1551,7 @@ proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
     seconds += float64(quotient(microseconds, 1_000_000))
     microseconds = float64(modulo(microseconds, 1_000_000))
 
-  result.datetime = localFromTime(seconds - float64(UnixEpochSeconds), zdt.tzinfo)
+  result.datetime = localFromTime(seconds, zdt.tzinfo)
   result.datetime.microsecond = int(microseconds)
   result.tzinfo = zdt.tzinfo
 
@@ -2690,7 +2726,7 @@ proc find_transition*(tz: ptr TZRuleData, t: float64): DstTransitions =
   ## in a Posix TZ definition, as described in the manual page
   ## for `tzset<https://linux.die.net/man/3/tzset>`__
   ##
-  let dt = fromTime(t)
+  let dt = fromUnixEpochSeconds(t)
   result = getTransitions(tz, dt.year)
 
 
@@ -2909,6 +2945,49 @@ when not defined(js):
     result = find_transition(tdata, int(utc_seconds))
 
 
+  when defined(useLeapSeconds):
+    proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int =
+      ## finds the closest leap second correction before a time expressed
+      ## in seconds since 1970-01-01T00:00:00 UTC.
+      ##
+      if isNil tzinfo:
+        echo "isNil tzinfo"
+        return 0
+
+      let eps = int64(epochSeconds)
+      case tzinfo.kind
+      of tzPosix:
+        return 0
+      of tzOlson:
+        let data = tzinfo.olsonData
+        var idx: int
+        if data.version == 2:
+          idx = 1
+        else:
+          idx = 0
+        var tdata = data.transitionData[idx]
+        if tdata.header.leapcnt == 0:
+          return 0
+        let d = tdata.leapSecondInfos
+        var lo = 0
+        var hi = len(d)
+        while lo < hi:
+          let mid = (lo + hi) div 2
+          if eps < d[mid].transitionTime:
+            hi = mid
+          else:
+            lo = mid + 1
+        idx = lo - 1
+        if idx < 0:
+          result = 0
+        else:
+          if d[idx].transitionTime == eps:
+            echo "Match! at ", idx
+            if idx >= 0:
+              return d[idx].correction - 1
+          result = d[idx].correction
+
+
 # from localtime.c
 const EPOCH_YEAR = 1970
 const YEARSPERREPEAT* = 400
@@ -3015,7 +3094,12 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
   when defined(useLeapSeconds):
     var i = 0
     if not isNil(zoneInfo) and zoneInfo.kind == tzOlson:
-      let zoneData = zoneInfo.olsonData.transitionData[1]
+      var idx = 0
+      if zoneInfo.olsonData.version == 2:
+        idx = 1
+      else:
+        idx = 0
+      let zoneData = zoneInfo.olsonData.transitionData[idx]
       i = zoneData.header.leapcnt
       if i > 0 and len(zoneData.leapSecondInfos) == i:
         dec(i)
@@ -3158,7 +3242,7 @@ proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTi
     else:
       stderr.write(getCurrentExceptionMsg())
       stderr.write("\L")
-    result = fromTime(utctime)
+    result = fromUnixEpochSeconds(utctime)
 
 
 proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime =
@@ -3186,7 +3270,10 @@ proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
   ## inspired by the somewhat similar function in Python
   ##
   let dt = zdt.datetime
-  let utctime = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
+  var utctime = toUTCTime(dt)
+  when defined(useLeapSeconds):
+    let ls = find_leapseconds(zdt.tzinfo, utctime).float64
+    utctime += ls
   try:
     result.datetime = localFromTime(utctime, tzinfo)
     result.datetime.microsecond = dt.microsecond
@@ -3197,7 +3284,7 @@ proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
     else:
       stderr.write(getCurrentExceptionMsg())
       stderr.write("\L")
-    result.datetime = fromTime(utctime)
+    result.datetime = fromUnixEpochSeconds(utctime)
     result.tzinfo = getTZInfo("UTC0", tzPosix)
 
 
@@ -3212,7 +3299,9 @@ template asUTC*(dt: DateTime): DateTime =
 proc asUTC*(zdt: ZonedDateTime): ZonedDateTime =
   let dt = zdt.datetime
   let tzinfo = getTZInfo("UTC0", tzPosix)
-  let utctime = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
+  var utctime = toUTCTime(dt)
+  when defined(useLeapSeconds):
+    utctime += float64(find_leapseconds(zdt.tzinfo, utctime))
   result.datetime = localFromTime(utctime, tzinfo)
   result.tzinfo = tzinfo
 
@@ -3270,6 +3359,12 @@ proc setTimeZone*(dt: DateTime, tzinfo: TZInfo): DateTime =
   result.isDST = tzdata.isDST
   result.zoneAbbrev = tzdata.zoneAbbrev
   result.offsetKnown = true
+
+
+proc setTimeZone1*(dt: DateTime, tzinfo: TZInfo): DateTime =
+  let tmp = dt.astimezone(tzinfo)
+  let td = tmp - dt
+  result = localfromTime(toTime(tmp) - td.totalSeconds())
 
 
 proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =

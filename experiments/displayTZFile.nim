@@ -3,7 +3,7 @@ import streams
 import struct
 import os
 
-import DateTime
+import ZonedDateTime
 
 type TZFileHeader = object
   magic:      string ## The identification magic number of TZ Data files.
@@ -248,6 +248,8 @@ when isMainModule:
   else:
     filename = paramStr(1)
 
+  let tzinfo = initTZInfo(filename, tzOlson)
+
   let data = readTZFile(filename)
   filename = filename.replace("/usr/share/zoneinfo/", "")
   #when defined(showFile):
@@ -277,7 +279,9 @@ when isMainModule:
           let lsi = tdata.leapSecondInfos
           for x in lsi:
             var line = filename & " LeapSecond: "
-            line.add($fromUnixEpochSeconds(float64(x.transitionTime)))
+            line.add(x.transitionTime)
+            line.add(" ")
+            line.add($localFromTime(float64(x.transitionTime), tzinfo))
             line.add(" ")
             line.add($x.correction)
             echo line
