@@ -1,4 +1,5 @@
 import ZonedDateTime
+import strutils
 
 const NTP_EPOCH = -2208988800
 
@@ -33,39 +34,20 @@ var LeapSecondData = [
   [3692217600, 37], # 1 Jan 2017
 ]
 
-proc test_ls_transitions() =
-  let tz = initTZInfo("/usr/share/zoneinfo/right/Zulu", tzOlson)
-
-  let base_lsinfo = LeapSecondData[0]
-  
-  for i in 1..high(LeapSecondData):
-    let lsinfo = LeapSecondData[i]
+proc test_format() =
+  var tz = initTZInfo("/usr/share/zoneinfo/right/UTC", tzOlson)
+  var nyc = initTZInfo("/usr/share/zoneinfo/right/America/New_York", tzOlson)
+  var bru = initTZInfo("/usr/share/zoneinfo/right/Europe/Berlin", tzOlson)
+  for lsinfo in LeapSecondData:
     let ttime = lsinfo[0]
     var ep_ttime = ttime + NTP_EPOCH
-    ep_ttime -= 2
-    let corr = lsinfo[1] - base_lsinfo[1]
-    let transitionTime = initZonedDateTime(localFromTime((ep_ttime + corr - 1).float64, tz), tz)
-    echo ttime, " ", ep_ttime, " ", corr, " ", transitionTime
-    for i in 1..4:
-      #let tmp = transitionTime + initTimeStamp(seconds = i.float)
-      #let tmp = transitionTime + initTimeDelta(seconds = i.float)
-      let tmp = transitionTime + i.seconds
-      case i
-      of 1:
-        echo tmp
-        assert tmp.second == 59
-      of 2:
-        echo tmp
-        assert tmp.second == 60
-      of 3:
-        echo tmp
-        assert tmp.second == 0
-      of 4:
-        echo tmp
-      else:
-        assert false
 
-when not defined(useLeapSeconds):
-  {.error: "works only if compiled with -d:useLeapSeconds".}
+    when defined(useLeapSeconds):
+      ep_ttime += (lsinfo[1] - 11)
 
-test_ls_transitions()
+    var zdt = initZonedDateTime(localFromTime(ep_ttime, tz), tz)
+    echo align($ep_ttime, 10), " ", zdt, ": ", zdt.format("ddd MMM dd y HH:mm:ssz")
+    echo align($ep_ttime, 10), " ", zdt, ": ", zdt.astimezone(nyc).format("ddd MMM dd y HH:mm:sszz")
+    echo align($ep_ttime, 10), " ", zdt, ": ", zdt.astimezone(nyc).astimezone(bru).format("ddd MMM dd y HH:mm:sszzz")
+    echo ""
+test_format()

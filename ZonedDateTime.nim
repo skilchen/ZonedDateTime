@@ -185,11 +185,12 @@ type
 
 
 const
-  OneDay = 86400
-  UnixEpochSeconds = 62135683200
-  UnixEpochDays = 719163
-  GregorianEpochSeconds = 1 * 24 * 60 * 60
-
+  OneDay* = 86400
+  UnixEpochSeconds* = 62135683200
+  UnixEpochDays* = 719163
+  GregorianEpochSeconds* = 1 * 24 * 60 * 60
+  EpochShift* = 719468 # to shift 1970-01-01 to 0000-03-01
+  NTPEpoch* = -2208988800
 
 type ISOWeekDate* = object
   year*: int
@@ -215,6 +216,27 @@ type TimeInterval* = object ## a time interval
 type TimeStamp* = object
   seconds*: float64
   microseconds*: float64
+
+
+# forward declarations
+proc fromTime*(t: float64): DateTime {.gcsafe.}
+proc fromTimeStamp*(ts: TimeStamp): DateTime {.gcsafe.}
+proc toTimeStamp*(dt: DateTime): TimeStamp {.gcsafe.}
+proc localFromTime*(t: SomeNumber, zoneInfo: TZInfo = nil): DateTime {.gcsafe.}
+proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo {.gcsafe.}
+proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
+proc setTimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
+proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe}
+
+proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
+proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
+proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime {.gcsafe.}
+proc `+`*(zdt: ZonedDateTime, ts: TimeStamp): ZonedDateTime {.gcsafe.}
+proc `+`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
+proc `-`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
+
+when defined(useLeapSeconds):
+  proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int {.gcsafe.}
 
 
 proc ifloor*[T](n: T): int =
@@ -300,12 +322,12 @@ proc totalSeconds*(td: TimeDelta): float64 =
   result += float64(td.microseconds) / 1e6
 
 
-proc initTimeDelta*(days, hours, minutes, seconds, microseconds: float64 = 0): TimeDelta =
+proc initTimeDelta*(days, hours, minutes, seconds, microseconds: SomeNumber = 0): TimeDelta =
   var s: float64 = 0.0
-  s += days * OneDay
-  s += hours * 3600
-  s += minutes * 60
-  s += seconds
+  s += float64(days) * OneDay
+  s += float64(hours) * 3600
+  s += float64(minutes) * 60
+  s += float64(seconds)
   result.days = quotient(s, OneDay.float64)
   result.seconds = int(s - float64(OneDay.float64 * result.days.float64))
   if microseconds != 0:
@@ -379,9 +401,6 @@ proc `$`*(isod: ISOWeekDate): string =
   result.add($isod.weekday)
 
 
-proc fromTimeStamp*(ts: TimeStamp): DateTime {.gcsafe.}
-proc toTimeStamp*(dt: DateTime): TimeStamp {.gcsafe.}
-
 
 proc initDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                    utcoffset: int = 0, isDST: bool = false, offsetKnown = false): DateTime =
@@ -397,14 +416,10 @@ proc initDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
   result.isDST = isDST
   result.offsetKnown = offsetKnown
 
-proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo {.gcsafe.}
+
 proc initTZInfo*(tzname: string, tztype = tzPosix): TZInfo =
   getTZInfo(tzname, tztype)
 
-
-proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
-proc setTimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
-proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe}
 
 proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                         utcoffset: int = 0, isDST: bool = false, offsetKnown = false;
@@ -421,17 +436,25 @@ proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int
 
 
 proc initZonedDateTime*(dt: DateTime, tzinfo: TZInfo): ZonedDateTime =
-  result.datetime = setTimeZone(dt, tzinfo)
-  result.tzinfo = tzinfo
+  if dt.offsetKnown:
+    result.datetime = setTimeZone(dt, tzinfo)
+    result.tzinfo = tzinfo
+  else:
+    var dttmp = dt
+    dttmp.day = 0
+    result.datetime = setTimezone(dttmp, tzinfo)
+    result.tzinfo = tzinfo
+    result.datetime = result.datetime + initTimeDelta(days = dt.day)
 
 
 proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                         utcoffset: int = 0, isDST: bool = false, offsetKnown = false;
                         tzinfo: TZInfo = nil ): ZonedDateTime =
-  result.datetime = setTimeZone(initDateTime(year, month, day, hour, minute, second, microsecond,
+  result.datetime = setTimeZone(initDateTime(year, month, 0, hour, minute, second, microsecond,
                                              utcoffset, isDST, offsetKnown),
                                 tzinfo)
   result.tzinfo = tzinfo
+  result.datetime = result.datetime + initTimeDelta(days = day)
 
 
 proc initZonedDateTime*(dt: DateTime, tzname: string): ZonedDateTime =
@@ -823,7 +846,7 @@ proc toDays*(year, month, day: int): int64 =
   let yoe = yr - era * 400
   let doy = (153 * (if month > 2: month - 3 else: month + 9) + 2) div 5 + day - 1
   let doe = yoe * 365 + yoe div 4 - yoe div 100 + doy
-  result = era * 146097 + doe - UnixEpochDays
+  result = era * 146097 + doe - EpochShift
 
 template toDays*(dt: DateTime): int64 =
   toDays(dt.year, dt.month, dt.day)
@@ -834,7 +857,6 @@ proc fromDays*(days: int64): DateTime =
   ##
   ## algorithm from `<http://howardhinnant.github.io/date/date_algorithms.html>`__
   ##
-  let EpochShift = 719468 # to shift 1970-01-01 to 0000-03-01
   let z = days + EpochShift
   let era = (if z >= 0: z else: z - 146096) div 146097
   let doe = z - era * 146097
@@ -862,10 +884,6 @@ proc toTimeStamp*(dt: DateTime): TimeStamp =
 
 proc toTimeStamp*(zdt: ZonedDateTime): TimeStamp =
   result = toTimeStamp(zdt.datetime)
-
-
-when defined(useLeapSeconds):
-  proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int {.gcsafe.}
 
 
 proc toUTCTimeStamp*(zdt: ZonedDateTime): TimeStamp =
@@ -1108,9 +1126,6 @@ proc getDaysBeforeMonth*(month: int, leap: int): int =
     result = 334 + leap
 
 
-proc `+`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
-proc `-`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
-
 proc toTimeStamp*(dt: DateTime, ti: TimeInterval): TimeStamp =
   ## Calculates the number of fractional seconds the interval is worth
   ## relative to `dt`.
@@ -1263,12 +1278,6 @@ proc `+`*(x, y: TimeStamp): TimeStamp =
   normalizeTimeStamp(result)
 
 
-proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
-proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
-proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime {.gcsafe.}
-proc `+`*(zdt: ZonedDateTime, ts: TimeStamp): ZonedDateTime {.gcsafe.}
-
-
 proc toTimeInterval*(dt1, dt2: DateTime): TimeInterval =
   ## calculate the `TimeInterval` between two `DateTime`
   ## a loopless implementation inspired in the date part
@@ -1320,15 +1329,7 @@ proc toTimeInterval*(dt1, dt2: DateTime): TimeInterval =
                           microseconds = float64(sign) * difftime.microseconds)
 
 
-proc toTimeInterval*(zdt1, zdt2: ZonedDateTime): TimeInterval =
-  result = toTimeInterval(zdt1.datetime, zdt2.datetime)
-
-
-proc toTimeIntervalb*(dt1, dt2: DateTime): TimeInterval =
-  result = dt2.toTimeinterval() - dt1.toTimeInterval
-
-
-proc toUTC*(dt: DateTime): DateTime =
+proc toUTC*(dt: DateTime, tzinfo: TZInfo = nil): DateTime =
   ## correct the value in `dt` according to the
   ## offset to UTC stored in the value. As we
   ## store utcoffsets as seconds west of UTC,
@@ -1336,10 +1337,38 @@ proc toUTC*(dt: DateTime): DateTime =
   ## value to get the corresponding time in UTC.
   ##
   var s = dt.toTimeStamp()
+
   s.seconds += (dt.utcoffset - (if dt.isDST: 3600 else: 0)).float64
+
+  when defined(useLeapSeconds):
+    if not isNil(tzinfo): # and tzinfo.kind == tzOlson:
+      var eps = s.seconds - float(UnixEpochSeconds)
+      eps += float64(find_leapseconds(tzinfo, eps))
+      result = fromTime(eps)
+      return
+
   result = fromTimeStamp(s)
   result.offSetKnown = true
   result.utcoffset = 0
+
+
+proc toTimeInterval*(zdt1, zdt2: ZonedDateTime, ignoreDST=true): TimeInterval =
+  ## calculate the relative date/time difference between `zdt1` and `zdt2`
+  ##
+  ## similar to the relativedelta function in the Python package dateutil
+  ##
+  if ignoreDST:
+    result = toTimeInterval(zdt1.datetime.toUTC(zdt1.tzinfo), zdt2.datetime.toUTC(zdt2.tzinfo))
+  else:
+    result = toTimeInterval(zdt1.datetime, zdt2.datetime)
+
+
+proc toTimeIntervalb*(dt1, dt2: DateTime): TimeInterval =
+  ## calculate the relative date/time difference between `dt1` and `dt2`
+  ##
+  ## inspired by the times module in Nims standard library
+  ##
+  result = dt2.toTimeinterval() - dt1.toTimeInterval()
 
 
 proc fromUnixEpochSeconds*(ues: float64, hoffset, moffset: int = 0): DateTime =
@@ -1396,10 +1425,12 @@ proc toTime*(dt: DateTime): float64 =
 
 
 proc toUTCTime*(dt: DateTime): float64 =
+  ## convert `dt` to UTC time
   result = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
 
 
 proc toUTCTime*(zdt: ZonedDateTime): float64 =
+  ## convert `zdt` to UTC time
   let dt = zdt.datetime
   result = toTime(dt) + float64(dt.utcoffset - int(dt.isDST) * 3600)
   when defined(useLeapSeconds):
@@ -1441,6 +1472,7 @@ template transferOffsetInfo(dt: DateTime) =
   result.offsetKnown = dt.offsetKnown
   result.utcoffset = dt.utcoffset
   result.isDST = dt.isDST
+  result.zoneAbbrev = dt.zoneAbbrev
 
 
 proc `+`*(dt: DateTime, td: TimeDelta): DateTime =
@@ -1455,7 +1487,6 @@ proc `+`*(dt: DateTime, td: TimeDelta): DateTime =
   result = fromTimeStamp(s)
   transferOffsetInfo(dt)
 
-proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime {.gcsafe.}
 
 proc `+`*(zdt: ZonedDateTime, td: TimeDelta): ZonedDateTime =
   ## add a TimeDelta `td` (represented as a number of
@@ -1524,7 +1555,7 @@ proc `+`*(dt: DateTime, ti: TimeInterval): DateTime =
 proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
   ## adds ``ti`` to DateTime ``zdt``.
   ##
-  let dt = zdt.datetime.toUTC()
+  let dt = zdt.datetime.toUTC(zdt.tzinfo)
   let totalMonths = dt.year.float64 * 12 + dt.month.float64 - 1 + ti.years * 12 + ti.months
   let year = quotient(totalMonths, 12)
   let month = modulo(totalMonths, 12) + 1
@@ -1537,7 +1568,6 @@ proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
     seconds += float64(find_leapseconds(zdt.tzinfo, seconds))
     if zdt.second == 60:
       seconds -= 1.0
-      echo "seconds: ", seconds
 
   seconds += (dt.hour.float64 + ti.hours) * 3600.0
   seconds += (dt.minute.float64 + ti.minutes) * 60.0
@@ -1985,24 +2015,24 @@ proc formatToken(dt: DateTime, token: string, buf: var string) =
     let
       nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
-    if nonDstTz >= 0: buf.add('+')
-    else: buf.add('-')
+    if nonDstTz >= 0: buf.add('-')
+    else: buf.add('+')
     buf.add($hours)
   of "zz":
     let
       nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
-    if nonDstTz >= 0: buf.add('+')
-    else: buf.add('-')
+    if nonDstTz >= 0: buf.add('-')
+    else: buf.add('+')
     if hours < 10: buf.add('0')
     buf.add($hours)
   of "zzz":
     let
-      nonDstTz = dt.utcoffset + int(dt.isDst) * 3600
+      nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
       minutes = (abs(nonDstTz) div 60) mod 60
-    if nonDstTz >= 0: buf.add('+')
-    else: buf.add('-')
+    if nonDstTz >= 0: buf.add('-')
+    else: buf.add('+')
     if hours < 10: buf.add('0')
     buf.add($hours)
     buf.add(':')
@@ -2087,7 +2117,10 @@ proc format*(dt: DateTime, f: string): string =
     inc(i)
 
 
-proc strftime*(dt: DateTime, fmtstr: string): string =
+template format*(zdt: ZonedDateTime, fmtstr: string): string =
+  format(zdt.datetime, fmtstr)
+
+proc strftime*(dt: DateTime, fmtstr: string, tzinfo: TZInfo = nil): string =
   ## a limited reimplementation of strftime, mainly based
   ## on the version implemented in lua, with some influences
   ## from the python version and some convenience features,
@@ -2189,7 +2222,7 @@ proc strftime*(dt: DateTime, fmtstr: string): string =
         result.add(intToStr(dt.year, 4))
       of 'z':
         if dt.offsetKnown:
-          let utcoffset = dt.utcoffset + int(dt.isDST) * 3600
+          let utcoffset = dt.utcoffset - int(dt.isDST) * 3600
           if utcoffset == 0 and not dt.isDST:
             result.add("Z")
           else:
@@ -2200,6 +2233,8 @@ proc strftime*(dt: DateTime, fmtstr: string): string =
             result.add(intToStr(abs(utcoffset) div 3600, 2))
             result.add(":")
             result.add(intToStr((abs(utcoffset) mod 3600) div 60, 2))
+            result.add(" ")
+            result.add(dt.zoneAbbrev)
       else:
         discard
 
@@ -2212,16 +2247,16 @@ proc strftime*(dt: DateTime, fmtstr: string): string =
         result.add(dt.strftime("%G-W%V-%u"))
         inc(i, 3)
       elif len(fmtstr[i..^1]) >= 4 and fmtstr[i..i+3] == "http":
-        result.add(dt.toUTC.strftime("%a, %d %b %Y %T GMT"))
+        result.add(dt.toUTC(tzinfo).strftime("%a, %d %b %Y %T GMT"))
         inc(i, 3)
       elif len(fmtstr[i..^1]) >=  5 and fmtstr[i..i+4] == "ctime":
-        result.add(dt.toUTC.strftime("%a %b %d %T GMT %Y"))
+        result.add(dt.toUTC(tzinfo).strftime("%a %b %d %T GMT %Y"))
         inc(i, 4)
       elif len(fmtstr[i..^1]) >= 6 and fmtstr[i..i+5] == "rfc850":
-        result.add(dt.toUTC.strftime("%A, %d-%b-%y %T GMT"))
+        result.add(dt.toUTC(tzinfo).strftime("%A, %d-%b-%y %T GMT"))
         inc(i, 5)
       elif len(fmtstr[i..^1]) >= 7 and fmtstr[i..i+6] == "rfc1123":
-        result.add(dt.toUTC.strftime("%a, %d %b %Y %T GMT"))
+        result.add(dt.toUTC(tzinfo).strftime("%a, %d %b %Y %T GMT"))
         inc(i, 6)
       elif len(fmtstr[i..^1]) >= 7 and fmtstr[i..i+6] == "rfc3339":
         result.add(dt.strftime("%Y-%m-%dT%H:%M:%S"))
@@ -2250,6 +2285,10 @@ proc strftime*(dt: DateTime, fmtstr: string): string =
     else:
       result.add(fmtstr[i])
     inc(i)
+
+
+proc strftime*(zdt: ZonedDateTime, fmtstr: string): string =
+  strftime(zdt.datetime, fmtstr, zdt.tzinfo)
 
 
 proc fromRFC3339*(self: string): DateTime =
@@ -2982,7 +3021,7 @@ when not defined(js):
           result = 0
         else:
           if d[idx].transitionTime == eps:
-            echo "Match! at ", idx
+            # echo "Match! at ", idx
             if idx >= 0:
               return d[idx].correction - 1
           result = d[idx].correction
@@ -3027,7 +3066,7 @@ proc leaps_thru_end_of(y: int): int =
   else:
     result = -(leaps_thru_end_of(-(y + 1)) + 1)
 
-proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
+proc localFromTime*(t: SomeNumber, zoneInfo: TZInfo = nil): DateTime =
   ## gets a `DateTime` instance from a number of seconds
   ## since 1970-01-01T00:00:00+00:00 UTC, interpreted in
   ## the timezone given in parameter `zoneInfo`.
@@ -3036,7 +3075,7 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
   ## `IANA TZ database <https://www.iana.org/time-zones>`__
   ##  distribution.
   ##
-  var fracsecs = t mod 1.0
+  var fracsecs = float64(t) mod 1.0
   var t = int64(t)
   var y = EPOCH_YEAR
   var tdays: int64 = t div SECSPERDAY
@@ -3078,7 +3117,7 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
         result.zoneAbbrev = pdata.stdName
       else:
         # we found a DST transition rule
-        if t.float64 >= toUnixEpochSeconds(ti.dstStart) and t.float64 < toTime(ti.dstEnd):
+        if t.float64 >= toTime(ti.dstStart) and t.float64 < toTime(ti.dstEnd):
           timeOffset = -pdata.dstOffset
           utcOffset = -pdata.utcOffset
           isDST = true
@@ -3092,8 +3131,8 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
   var corr = 0
   var hit = 0
   when defined(useLeapSeconds):
-    var i = 0
     if not isNil(zoneInfo) and zoneInfo.kind == tzOlson:
+      var i = 0
       var idx = 0
       if zoneInfo.olsonData.version == 2:
         idx = 1
@@ -3142,7 +3181,6 @@ proc localFromTime*(t: float64, zoneInfo: TZInfo = nil): DateTime =
 
   # apply correction from timezone data
   rem += timeOffset - corr
-
   while rem < 0:
     rem += SECSPERDAY
     dec(idays)
@@ -3313,8 +3351,7 @@ type TZInfoData = object
   zoneAbbrev: string
 
 proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo): TZInfoData =
-  let t = toUnixEpochSeconds(dt) - 3600.0
-
+  let t = toUTCTime(dt)
   if not isNil zoneInfo:
     case zoneInfo.kind
     of tzOlson:
@@ -3359,12 +3396,6 @@ proc setTimeZone*(dt: DateTime, tzinfo: TZInfo): DateTime =
   result.isDST = tzdata.isDST
   result.zoneAbbrev = tzdata.zoneAbbrev
   result.offsetKnown = true
-
-
-proc setTimeZone1*(dt: DateTime, tzinfo: TZInfo): DateTime =
-  let tmp = dt.astimezone(tzinfo)
-  let td = tmp - dt
-  result = localfromTime(toTime(tmp) - td.totalSeconds())
 
 
 proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =

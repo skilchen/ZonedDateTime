@@ -31,7 +31,7 @@ for i in 0..24:
          lalign($tkt, 30), " ", align($(tkt - nyt), 8))
     # echo(lalign($cat, 30), " ", align($(cat - zht), 8))
   else:
-    printf("%-30s %8s %-30s %8s %s %8s\n", $nyt, $(nyt - zht),
-                                           $zht, $(zht - tkt),
-                                           $tkt, $(tkt - nyt))
+    printf("%-30s %8s %-30s %8s %-30s %8s\n", $nyt, $(nyt - zht),
+                                              $zht, $(zht - tkt),
+                                              $tkt, $(tkt - nyt))
     # printf("%-30s %8s\n", $cat, $(cat - zht))

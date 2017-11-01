@@ -29,10 +29,10 @@ for i in 0..24:
   when defined(js):
     echo(lalign($nyt, 30), " ", align($(nyt - d), 8), " ",
          lalign($zht, 30), " ", align($(zht - d), 8), " ",
-         lalign($tkt, 32), " ", align($(tkt - d), 8))
+         lalign($tkt, 30), " ", align($(tkt - d), 8))
     # echo(lalign($cat, 30), " ", align($(cat - d), 8))
   else:
-    printf("%-30s %8s %-30s %8s %s %8s\n", $nyt, $(nyt - d),
-                                           $zht, $(zht - d),
-                                           $tkt, $(tkt - d))
+    printf("%-30s %8s %-30s %8s %-30s %8s\n", $nyt, $(nyt - d),
+                                              $zht, $(zht - d),
+                                              $tkt, $(tkt - d))
     # printf("%-30s %8s\n", $cat, $(cat - d))
