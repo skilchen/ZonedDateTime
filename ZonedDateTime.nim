@@ -3199,7 +3199,7 @@ proc localFromTime*(t: SomeNumber, zoneInfo: TZInfo = nil): DateTime =
   result.minute = int(rem div SECSPERMIN)
 
   # here we would apply leap second correction from timezone data
-  result.second = rem mod SECSPERMIN + hit
+  result.second = int(rem mod SECSPERMIN + hit)
 
   var ip = MONTH_LENGTHS[isLeap(y)]
   var month = 0
