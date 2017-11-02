@@ -210,7 +210,7 @@ type TimeInterval* = object ## a time interval
   minutes*: float64      ## The number of minutes
   seconds*: float64      ## The number of seconds
   microseconds*: float64 ## The number of microseconds
-  calculated: bool       ## to indicate if TimeInterval was manually set
+  calculated*: bool       ## to indicate if TimeInterval was manually set
                          ## or calculated internally
 
 type TimeStamp* = object
@@ -227,6 +227,9 @@ proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo {.gcsafe.}
 proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
 proc setTimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
 proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe}
+proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
+proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
+proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe.}
 
 proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
 proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
@@ -295,7 +298,7 @@ proc `$`*(dt: DateTime): string =
     if dt.utcoffset == 0 and not dt.isDST and isNil(dt.zoneAbbrev):
       result.add("Z")
     else:
-      if dt.utcoffset < 0:
+      if dt.utcoffset <= 0:
         result.add("+")
       else:
         result.add("-")
@@ -305,7 +308,7 @@ proc `$`*(dt: DateTime): string =
       result.add(intToStr(hr, 2))
       result.add(":")
       result.add(intToStr(mn, 2))
-      if not isNil(dt.zoneAbbrev):
+      if not isNil(dt.zoneAbbrev) and not defined(testing):
         result.add(" ")
         result.add(dt.zoneAbbrev)
 
@@ -411,7 +414,11 @@ proc initDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
   result.minute = minute
   result.second = second
   result.microsecond = microsecond
-  result = fromTimeStamp(toTimeStamp(result))
+  # if we compile to c++, this fails for whatever reason
+  # result = fromTimeStamp(toTimeStamp(result))
+  # this works around the strange failure
+  let tmp = fromTimeStamp(toTimeStamp(result))
+  result = tmp
   result.utcoffset = utcoffset
   result.isDST = isDST
   result.offsetKnown = offsetKnown
@@ -450,9 +457,12 @@ proc initZonedDateTime*(dt: DateTime, tzinfo: TZInfo): ZonedDateTime =
 proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                         utcoffset: int = 0, isDST: bool = false, offsetKnown = false;
                         tzinfo: TZInfo = nil ): ZonedDateTime =
-  result.datetime = setTimeZone(initDateTime(year, month, 0, hour, minute, second, microsecond,
-                                             utcoffset, isDST, offsetKnown),
-                                tzinfo)
+  result.datetime = initDateTime(year, month, 0, hour, minute, second, microsecond,
+                                 utcoffset, isDST, offsetKnown)
+
+  if not isNil(tzInfo):
+    result.datetime = setTimezone(result.datetime, tzInfo)
+
   result.tzinfo = tzinfo
   result.datetime = result.datetime + initTimeDelta(days = day)
 
@@ -497,7 +507,7 @@ proc `utcoffset`*(zdt: ZonedDateTime): int =
   result = zdt.datetime.utcoffset
 proc `utcoffset=`*(zdt: var ZonedDateTime, val: int) =
   zdt.datetime.utcoffset = val
-proc `isDST`*(zdt: var ZonedDateTime): bool =
+proc `isDST`*(zdt: ZonedDateTime): bool =
   result = zdt.datetime.isDST
 proc `isDST*`*(zdt: var ZonedDateTime, val: bool) =
   zdt.datetime.isDST = val
@@ -583,6 +593,10 @@ proc `+`*(ti1, ti2: TimeInterval): TimeInterval =
   result.years = carry + ti1.years + ti2.years
 
 
+proc `+=`*(ti1: var TimeInterval, ti2: TimeInterval) =
+  ti1 = ti1 + ti2
+
+
 proc `<`(x, y: TimeInterval): bool =
   let xs:float64 = x.years * 366 * 86400 + x.months * 31 * 86400 +
            x.days * 86400 + x. hours * 3600 + x.minutes * 60 +
@@ -591,6 +605,16 @@ proc `<`(x, y: TimeInterval): bool =
            y.days * 86400 + y. hours * 3600 + y.minutes * 60 +
            y.seconds + float64(quotient(y.microseconds.float64, 1e6))
   result = xs < ys
+
+
+proc `==`*(x, y: TimeInterval): bool =
+  result = x.years == y.years and
+           x.months == y.months and
+           x.days == y.days and
+           x.hours == y.hours and
+           x.minutes == y.minutes and
+           x.seconds == y.seconds and
+           abs(x.microseconds - y.microseconds) < 10
 
 
 proc `-`*(ti: TimeInterval): TimeInterval =
@@ -607,6 +631,10 @@ proc `-`*(ti: TimeInterval): TimeInterval =
     microseconds: -ti.microseconds,
     calculated: ti.calculated
   )
+
+
+proc `-=`*(ti1: var TimeInterval, ti2: TimeInterval) =
+  ti1 = ti1 + (-ti2)
 
 
 proc `-`*(ts: TimeStamp): TimeStamp =
@@ -643,6 +671,8 @@ proc microseconds*(ms: SomeNumber): TimeInterval {.inline.} =
   ##
   initTimeInterval(microseconds = ms.float64)
 
+proc milliseconds*(ms: SomeNumber): TimeInterval {.inline.} =
+  initTimeInterval(microseconds = ms.float64 * 1000.0)
 
 proc seconds*(s: SomeNumber): TimeInterval {.inline.} =
   ## TimeInterval of `s` seconds
@@ -1055,9 +1085,12 @@ template `<`*(x, y: ZonedDateTime): bool =
 template `==`*(x, y: DateTime): bool =
   toTimeStamp(x) == toTimeStamp(y)
 
-template `==`*(x, y: ZonedDateTime): bool =
-  x.tzinfo == y.tzinfo and
-    toTimeStamp(x.datetime) == toTimeStamp(y.datetime)
+proc `==`*(x, y: ZonedDateTime): bool =
+  if not isNil(x.tzinfo) and not isNil(y.tzinfo):
+    result = (x.tzinfo == y.tzinfo and
+                toTimeStamp(x.datetime) == toTimeStamp(y.datetime))
+  else:
+    result = toTimeStamp(x.datetime) == toTimeStamp(y.datetime)
 
 proc `<=`*(x, y: DateTime): bool =
   var x = toTimeStamp(x)
@@ -1340,12 +1373,12 @@ proc toUTC*(dt: DateTime, tzinfo: TZInfo = nil): DateTime =
 
   s.seconds += (dt.utcoffset - (if dt.isDST: 3600 else: 0)).float64
 
-  when defined(useLeapSeconds):
-    if not isNil(tzinfo): # and tzinfo.kind == tzOlson:
-      var eps = s.seconds - float(UnixEpochSeconds)
-      eps += float64(find_leapseconds(tzinfo, eps))
-      result = fromTime(eps)
-      return
+  # when defined(useLeapSeconds):
+  #   if not isNil(tzinfo): # and tzinfo.kind == tzOlson:
+  #     var eps = s.seconds - float(UnixEpochSeconds)
+  #     eps += float64(find_leapseconds(tzinfo, eps))
+  #     result = fromTime(eps)
+  #     return
 
   result = fromTimeStamp(s)
   result.offSetKnown = true
@@ -1555,7 +1588,13 @@ proc `+`*(dt: DateTime, ti: TimeInterval): DateTime =
 proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
   ## adds ``ti`` to DateTime ``zdt``.
   ##
+  # to prevent the indirection on the access of the individual
+  # date/time fields implied in zdt which forwards the access
+  # to its internal datetime anyway. And we want to perform
+  # the calculation on UTC time. We convert the result
+  # back to the timezone stored in `zdt`
   let dt = zdt.datetime.toUTC(zdt.tzinfo)
+
   let totalMonths = dt.year.float64 * 12 + dt.month.float64 - 1 + ti.years * 12 + ti.months
   let year = quotient(totalMonths, 12)
   let month = modulo(totalMonths, 12) + 1
@@ -1565,9 +1604,12 @@ proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime =
   var seconds = float64(ordinal) * OneDay
 
   when defined(useLeapSeconds):
-    seconds += float64(find_leapseconds(zdt.tzinfo, seconds))
-    if zdt.second == 60:
-      seconds -= 1.0
+    # the calculation of the seconds above
+    # doesn't take into account leap seconds
+    # we add them here to get to 00:00:00
+    # on the calculated day
+    seconds += float(find_leapseconds(zdt.tzinfo, seconds))
+    discard
 
   seconds += (dt.hour.float64 + ti.hours) * 3600.0
   seconds += (dt.minute.float64 + ti.minutes) * 60.0
@@ -1708,6 +1750,24 @@ proc parseToken(dt: var DateTime; token, value: string; j: var int) =
   of "dd":
     dt.day = value[j..j+1].parseInt()
     j += 2
+  of "dddd":
+    if value.len >= j+6 and value[j..j+5].cmpIgnoreCase("sunday") == 0:
+      j += 6
+    elif value.len >= j+6 and value[j..j+5].cmpIgnoreCase("monday") == 0:
+      j += 6
+    elif value.len >= j+7 and value[j..j+6].cmpIgnoreCase("tuesday") == 0:
+      j += 7
+    elif value.len >= j+9 and value[j..j+8].cmpIgnoreCase("wednesday") == 0:
+      j += 9
+    elif value.len >= j+8 and value[j..j+7].cmpIgnoreCase("thursday") == 0:
+      j += 8
+    elif value.len >= j+6 and value[j..j+5].cmpIgnoreCase("friday") == 0:
+      j += 6
+    elif value.len >= j+8 and value[j..j+7].cmpIgnoreCase("saturday") == 0:
+      j += 8
+    else:
+      raise newException(ValueError,
+        "Couldn't parse day of week (dddd), got: " & value)
   of "h", "H":
     var pd = parseInt(value[j..j+1], sv)
     dt.hour = sv
@@ -2015,14 +2075,14 @@ proc formatToken(dt: DateTime, token: string, buf: var string) =
     let
       nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
-    if nonDstTz >= 0: buf.add('-')
+    if nonDstTz > 0: buf.add('-')
     else: buf.add('+')
     buf.add($hours)
   of "zz":
     let
       nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
-    if nonDstTz >= 0: buf.add('-')
+    if nonDstTz > 0: buf.add('-')
     else: buf.add('+')
     if hours < 10: buf.add('0')
     buf.add($hours)
@@ -2031,7 +2091,7 @@ proc formatToken(dt: DateTime, token: string, buf: var string) =
       nonDstTz = dt.utcoffset - int(dt.isDst) * 3600
       hours = abs(nonDstTz) div 3600
       minutes = (abs(nonDstTz) div 60) mod 60
-    if nonDstTz >= 0: buf.add('-')
+    if nonDstTz > 0: buf.add('-')
     else: buf.add('+')
     if hours < 10: buf.add('0')
     buf.add($hours)
@@ -2440,7 +2500,15 @@ proc getTransitions(rd: ptr TZRuleData, year: int): DstTransitions =
     else:
       dt = initDateTime(year, dstRule.dstMonth, 1)
       dt = nth_kday(dstRule.dstWeek, dstRule.dstWDay, dt)
-    result = dt + seconds(dstRule.dstTransitionTime) + seconds(offset)
+    #
+    # now we have the correct transition day at 00:00:00 UTC
+    # the transition time in Posix TZ strings is given in
+    # local time in effect before the transition. It
+    # defaults to 02:00
+    # we have to adjust to get time in UTC:
+    # - add transition time and current utcoffset
+    #
+    result = dt + seconds(dstRule.dstTransitionTime)  + seconds(offset)
 
   proc getJulian0Date(dstRule: DstTransitionRule, offset: int, isEnd: bool): DateTime =
     if isEnd and dstRule.dstYDay < sr.dstYDay:
@@ -2990,7 +3058,6 @@ when not defined(js):
       ## in seconds since 1970-01-01T00:00:00 UTC.
       ##
       if isNil tzinfo:
-        echo "isNil tzinfo"
         return 0
 
       let eps = int64(epochSeconds)
@@ -3021,7 +3088,7 @@ when not defined(js):
           result = 0
         else:
           if d[idx].transitionTime == eps:
-            # echo "Match! at ", idx
+            echo "Match! at ", idx
             if idx >= 0:
               return d[idx].correction - 1
           result = d[idx].correction
@@ -3276,6 +3343,11 @@ proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTi
     result.microsecond = dt.microsecond
   except:
     when defined(js):
+      # Nim complains about GC-unsafety of this
+      # lets ignore this warning, as it is somewhat
+      # unclear what Nims garbage collector has to
+      # deal with here, as we are running in javascript
+      #
       echo getCurrentExceptionMsg()
     else:
       stderr.write(getCurrentExceptionMsg())

@@ -38,8 +38,9 @@ proc test_86401_days() =
 
   for lsinfo in LeapSecondData[2..^1]:
     let ttime = lsinfo[0]
+    let corr = lsinfo[1] - 10
     var ep_ttime = ttime + NTP_EPOCH
-    var before = initZonedDateTime(localFromTime((ep_ttime - 7200).float64, tz), tz)
+    var before = initZonedDateTime(localFromTime((ep_ttime + corr - 3600 * 3 - 1).float64, tz), tz)
     let b = before
     var after = initZonedDateTime(b.year, b.month, b.day + 1, b.hour, b.minute, b.second, b.microsecond, tzinfo=tz)
     var td = after - before
@@ -49,18 +50,20 @@ proc test_86401_days() =
     after = before + 1.years
     td = after - before
     echo before, " ", after, " ", td
-    assert td.days in {365, 366} and td.seconds == 1
+    assert td.days in {365, 366} and td.seconds > 0
 
     after = before + 10.years
     td = after - before
     echo before, " ", after, " ", td
 
   echo ""
-  let corr = LeapSecondData[^1][1] - LeapSecondData[0][1]
-  var before = initZonedDateTime(localFromTime(LeapSecondData[1][0] + NTP_EPOCH, tz), tz)
-  var after = initZonedDateTime(localFromTime(LeapSecondData[^1][0] + NTP_EPOCH + corr, tz), tz)
+  let full_corr = LeapSecondData[^1][1] - LeapSecondData[0][1]
+  let last_corr = full_corr - 1 # because the last leapsecond is not yet inserted
+  var before = initZonedDateTime(localFromTime(LeapSecondData[0][0] + NTP_EPOCH, tz), tz)
+  var after = initZonedDateTime(localFromTime(LeapSecondData[^1][0]  + full_corr + NTP_EPOCH, tz), tz)
   let td = after - before
   echo before, " ", after, " ", td, " ", td.seconds, " leap seconds in between..."
+  assert td.seconds == full_corr - 1
 
 when not defined(useLeapSeconds):
   {.error: "works only if compiled with: -d:useLeapSeconds".}

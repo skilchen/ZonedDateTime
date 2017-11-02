@@ -37,7 +37,7 @@ proc test_ls_transitions() =
   let tz = initTZInfo("/usr/share/zoneinfo/right/Zulu", tzOlson)
 
   let base_lsinfo = LeapSecondData[0]
-  
+
   for i in 1..high(LeapSecondData):
     let lsinfo = LeapSecondData[i]
     let ttime = lsinfo[0]
@@ -45,7 +45,7 @@ proc test_ls_transitions() =
     ep_ttime -= 2
     let corr = lsinfo[1] - base_lsinfo[1]
     let transitionTime = initZonedDateTime(localFromTime((ep_ttime + corr - 1).float64, tz), tz)
-    echo ttime, " ", ep_ttime, " ", corr, " ", transitionTime
+    echo ttime, " ", ep_ttime, " ", corr, " ", transitionTime + 0.seconds + 0.seconds + 0.seconds + 0.seconds
     for i in 1..4:
       #let tmp = transitionTime + initTimeStamp(seconds = i.float)
       #let tmp = transitionTime + initTimeDelta(seconds = i.float)
