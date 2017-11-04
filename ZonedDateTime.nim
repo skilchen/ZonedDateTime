@@ -124,6 +124,20 @@ type
   RuleType* = enum ## the three possibilities to express DST transitions in a Posix TZ string
     rJulian1, rJulian0, rMonth
 
+  TimeAmount* = enum
+    taMicrosecond,
+    taMillisecond,
+    taSecond,
+    taMinute,
+    taHour,
+    taDay,
+    taWeek
+    taMonth,
+    taQuarter,
+    taYear,
+    taDecade,
+    taCentury
+
 
   DstTransitionRule* = ref DstTransitionRuleObj
   DstTransitionRuleObj* = object ## variant object to store DST transition rules from Posix TZ strings
@@ -230,6 +244,7 @@ proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe}
 proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
 proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
 proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe.}
+proc getWeekDay*(dt: DateTime): int {.gcsafe.}
 
 proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
 proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
@@ -271,6 +286,11 @@ proc tmod*[T, U](x: T, y: U): U =
   ##
   ## x - int(x / y) * y
   return x.U - tdiv(x.U, y.U).U * y
+
+
+proc amod*[T](x, y: T): int =
+  ## Return the same as a % b with b instead of 0.
+  return int(y.float64 + modulo(x.float64, -y.float64))
 
 
 proc `$`*(dt: DateTime): string =
@@ -536,7 +556,7 @@ template initTimeStamp*(days, hours, minutes, seconds, microseconds: SomeInteger
                 float64(seconds), float64(microseconds))
 
 
-proc initTimeInterval*(years, months, days, hours, seconds, minutes, microseconds: float64 = 0;
+proc initTimeInterval*(years, months, days, hours, minutes, seconds, microseconds: float64 = 0;
                       calculated = false): TimeInterval =
   ## creates a new ``TimeInterval``.
   ##
@@ -595,6 +615,34 @@ proc `+`*(ti1, ti2: TimeInterval): TimeInterval =
 
 proc `+=`*(ti1: var TimeInterval, ti2: TimeInterval) =
   ti1 = ti1 + ti2
+
+
+# Warning: multiplication of non constant parts of the timeinterval
+#          may give unexpected results. Don't multiply years and months
+#
+proc `*`*(ti: TimeInterval, n: SomeNumber): TimeInterval =
+  var n = float64(n)
+  result = initTimeInterval(ti.years * n,
+                            ti.months * n,
+                            ti.days * n,
+                            ti.hours * n,
+                            ti.minutes * n,
+                            ti.seconds * n,
+                            ti.microseconds * n)
+
+template `*`*(n: SomeNumber, ti: TimeInterval): TimeInterval =
+  ti * i
+
+
+proc `/`*(ti: TimeInterval, n: SomeNumber): TimeInterval =
+  let n = float64(n)
+  result = initTimeInterval(ti.years / n,
+                            ti.months / n,
+                            ti.days / n,
+                            ti.hours / n,
+                            ti.minutes / n,
+                            ti.seconds / n,
+                            ti.microseconds / n)
 
 
 proc `<`(x, y: TimeInterval): bool =
@@ -714,6 +762,57 @@ proc years*(y: SomeNumber): TimeInterval {.inline.} =
   ##
   ## ``echo now() + 2.years``
   initTimeInterval(years = y.float64)
+
+
+proc trunc*(dt: DateTime, unit: TimeAmount): DateTime =
+  result = dt
+  case unit
+  of taMillisecond:
+    result.microsecond = dt.microsecond div 1000
+  of taSecond:
+    result.microsecond = 0
+  of taMinute:
+    result.microsecond = 0
+    result.second = 0
+  of taHour:
+    result.microsecond = 0
+    result.second = 0
+    result.minute = 0
+  of taDay:
+    result.microsecond = 0
+    result.second = 0
+    result.minute = 0
+    result.hour = 0
+  of taWeek:
+    if dt.year >= 0:
+      result = result - initTimeDelta(days = amod(getWeekDay(dt), 7) - 1)
+    else:
+      result = result + initTimeDelta(days = amod(getWeekDay(dt), 7) - 1)
+    result.microsecond = 0
+    result.second = 0
+    result.minute = 0
+    result.hour = 0
+  of taMonth:
+    result.microsecond = 0
+    result.second = 0
+    result.minute = 0
+    result.hour = 0
+    result.day = 1
+  of taQuarter:
+    result.microsecond = 0
+    result.second = 0
+    result.minute = 0
+    result.hour = 0
+    result.day = 1
+    result.month = dt.month div 3 * 3 + 1
+  of taYear:
+    result = initDateTime(dt.year, 1, 1)
+  of taDecade:
+    result = initDateTime(dt.year - modulo(dt.year, 10), 1, 1)
+  of taCentury:
+    result = initDateTime(dt.year - modulo(dt.year, 100), 1, 1)
+  else:
+    discard
 
 
 proc toTimeStamp*(td: TimeDelta): TimeStamp =
@@ -1020,11 +1119,6 @@ proc toOrdinalFromISO*(isod: ISOWeekDate): int64 =
   ##| same as calendrica-3.0's fixed-from-iso
   ##
   return nth_kday(isod.week, 0, isod.year - 1, 12, 28) + isod.weekday
-
-
-proc amod*[T](x, y: T): int =
-  ##| Return the same as modulo(a, b) with b instead of 0.
-  return int(y.float64 + modulo(x.float64, -y.float64))
 
 
 proc toISOWeekDate*(dt: DateTime): ISOWeekDate =
@@ -2845,26 +2939,27 @@ proc find_transition*(tz: ptr TZRuleData, dt: DateTime): DstTransitions =
   result = getTransitions(tz, dt.year)
 
 when not defined(js):
-  proc readTZFile*(filename: string): TZFileContent =
+  import zip/zipfiles
+
+  proc readTZData*(tzdata: Stream, zoneName = ""): TZFileContent =
     ## reads a compiled Olson TZ Database file
     ##
     ## adapted from similar code in Pythons
     ## `dateutil <https://pypi.python.org/pypi/python-dateutil>`__
     ## package and in the `IANA Time Zone database <https://www.iana.org/time-zones>`__
     ##
-    var data = readFile(filename)
-    var fp = newStringStream($data)
+    var fp = tzdata
 
     result.transitionData = @[]
     result.posixTZ = "UTC"
 
     var v2 = false
 
-    proc readBlock(fp: StringStream, blockNr = 1): TZFileData =
+    proc readBlock(fp: Stream, blockNr = 1): TZFileData =
       var magic = fp.readStr(4)
 
       if $magic != "TZif":
-        raise newException(ValueError, $filename & " is not a timezone file")
+        raise newException(ValueError, zoneName & " is not a timezone file")
 
       let version = fp.readInt8() - ord('0')
       if version == 2:
@@ -3024,6 +3119,24 @@ when not defined(js):
       result.posixTZ = fp.readLine()
     fp.close()
 
+
+  proc readTZFile*(filename: string): TZFileContent =
+    var fp = newFileStream(filename, fmRead)
+    if not isNil(fp):
+      result = readTZData(fp, filename)
+
+
+  proc readTZZip*(zipname: string, zonename: string): TZFileContent =
+    var zip: ZipArchive
+    if zip.open(zipname):
+      var fp = getStream(zip, zonename)
+      if not isNil(fp):
+        result = readTZData(fp, zonename)
+        zip.close()
+      else:
+        raise newException(IOError, "failed to read: " & zonename & " from Zip: " & zipname)
+    else:
+      raise newException(IOError, "failed to open ZIP: " & zipname)
 
   proc find_transition*(tdata: TZFileData, epochSeconds: int): TransitionInfo =
     ## finds the closest DST transition before a time expressed
@@ -3302,10 +3415,19 @@ proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo =
     when defined(js):
       raise newException(TimeZoneError, "Olson timezone files not supported on js backend")
     else:
-      var fullpath = ""
+      var zippath = currentSourcePath
+      let zipname = "zoneinfo.zip"
+      var tz: TZFileContent
       if fileExists(tzname):
-        fullpath = tzname
+        tz = readTZFile(tzname)
+      elif fileExists(zipname):
+        tz = readTZZip(zipname, tzname)
+      elif fileExists(zippath / zipname):
+        tz = readTZZip(zippath / zipname, tzname)
+      elif fileExists(parentDir(zippath) / zipname):
+        tz = readTZZip(parentDir(zippath) / zipname, tzname)
       else:
+        var fullpath = ""
         let timezoneDirs = [
           "/usr/share/zoneinfo",
           "/usr/local/share/zoneinfo",
@@ -3315,10 +3437,9 @@ proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo =
           if fileExists(dir / tzname):
             fullpath = dir / tzname
             break
-      if fullpath == "":
-        raise newException(TimeZoneError, "can't load " & tzname & " as Olson Timezone data. Giving up ...")
-
-      let tz = readTZFile(fullpath)
+        if fullpath == "":
+          raise newException(TimeZoneError, "can't load " & tzname & " as Olson Timezone data. Giving up ...")
+        tz = readTZFile(fullpath)
       var tzinfo = TZInfo(kind: tzOlson, olsonData: tz)
       result = tzinfo
 
