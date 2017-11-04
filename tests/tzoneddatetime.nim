@@ -35,7 +35,7 @@ proc checkFormat(t: TimeInfo, format, expected: string) =
     echo "Formatting failure!"
     echo "expected: ", expected
     echo "actual  : ", actual
-    doAssert false
+    doAssert(false)
 
 let t = getGMTime(fromSeconds(2147483647))
 t.checkFormat("ddd dd MMM hh:mm:ss yyyy", "Tue 19 Jan 03:14:07 2038")
@@ -70,7 +70,7 @@ proc parseTest(s, f, sExpected: string, ydExpected: int) =
     echo "expected: ", $sExpected
     echo "actual  : ", $parsedStr
     echo "before  : ", $parsed
-    doAssert false
+    doAssert(false)
   doAssert(parsed.yearday == ydExpected)
 proc parseTestTimeOnly(s, f, sExpected: string) =
   doAssert(sExpected in $s.parse(f))
@@ -130,64 +130,64 @@ parseTestTimeOnly("3:04PM", "h:mmtt", "15:04:00")
 #  echo "Todays date after decoding to interval: ", tint
 
 # checking dayOfWeek matches known days
-doAssert getDayOfWeek(21, 9, 1900) == dFri
-doAssert getDayOfWeek(1, 1, 1970) == dThu
-doAssert getDayOfWeek(21, 9, 1970) == dMon
-doAssert getDayOfWeek(1, 1, 2000) == dSat
-doAssert getDayOfWeek(1, 1, 2021) == dFri
+doAssert(getDayOfWeek(21, 9, 1900) == dFri)
+doAssert(getDayOfWeek(1, 1, 1970) == dThu)
+doAssert(getDayOfWeek(21, 9, 1970) == dMon)
+doAssert(getDayOfWeek(1, 1, 2000) == dSat)
+doAssert(getDayOfWeek(1, 1, 2021) == dFri)
 # # Julian tests
-# doAssert getDayOfWeekJulian(21, 9, 1900) == dFri
-# doAssert getDayOfWeekJulian(21, 9, 1970) == dMon
-# doAssert getDayOfWeekJulian(1, 1, 2000) == dSat
-# doAssert getDayOfWeekJulian(1, 1, 2021) == dFri
+# doAssert(getDayOfWeekJulian(21, 9, 1900) == dFri)
+# doAssert(getDayOfWeekJulian(21, 9, 1970) == dMon)
+# doAssert(getDayOfWeekJulian(1, 1, 2000) == dSat)
+# doAssert(getDayOfWeekJulian(1, 1, 2021) == dFri)
 
 # toSeconds tests with GM timezone
 let t4L = getGMTime(fromSeconds(876124714))
-doAssert toSeconds(toTime(t4L.datetime)) == 876124714
-doAssert toSeconds(toTime(t4L.datetime)) + t4L.utcoffset.float == toSeconds(toTime(t4.datetime))
+doAssert(toSeconds(toTime(t4L.datetime)) == 876124714)
+doAssert(toSeconds(toTime(t4L.datetime)) + t4L.utcoffset.float == toSeconds(toTime(t4.datetime)))
 
 # adding intervals
 var
   a1L = toSeconds(toTime(t4L.datetime + initInterval(hours = 1))) + t4L.utcoffset.float
   a1G = toSeconds(toTime(t4.datetime)) + 60.0 * 60.0
-doAssert a1L == a1G
+doAssert(a1L == a1G)
 
 # subtracting intervals
 a1L = toSeconds(toTime(t4L.datetime - initInterval(hours = 1))) + t4L.utcoffset.float
 a1G = toSeconds(toTime(t4.datetime)) - (60.0 * 60.0)
-doAssert a1L == a1G
+doAssert(a1L == a1G)
 
 
 # add/subtract TimeIntervals and Time/TimeInfo
-doAssert getTime() - 1.seconds == getTime() - 3.seconds + 2.seconds
-doAssert getTime() + 65.seconds == getTime() + 1.minutes + 5.seconds
-doAssert getTime() + 60.minutes == getTime() + 1.hours
-doAssert getTime() + 24.hours == getTime() + 1.days
-doAssert getTime() + 13.months == getTime() + 1.years + 1.months
+doAssert(getTime() - 1.seconds == getTime() - 3.seconds + 2.seconds)
+doAssert(getTime() + 65.seconds == getTime() + 1.minutes + 5.seconds)
+doAssert(getTime() + 60.minutes == getTime() + 1.hours)
+doAssert(getTime() + 24.hours == getTime() + 1.days)
+doAssert(getTime() + 13.months == getTime() + 1.years + 1.months)
 var
   ti1 = getTime() + 1.years
 ti1 = ti1 - 1.years
-doAssert ti1 == getTime()
+doAssert(ti1 == getTime())
 ti1 = ti1 + 1.days
-doAssert ti1 == getTime() + 1.days
+doAssert(ti1 == getTime() + 1.days)
 
 # overflow of TimeIntervals on initalisation
-doAssert initInterval(microseconds = 25_000_000) == initInterval(seconds = 25)
-doAssert initInterval(seconds = 65) == initInterval(seconds = 5, minutes = 1)
-doAssert initInterval(hours = 25) == initInterval(hours = 1, days = 1)
-doAssert initInterval(months = 13) == initInterval(months = 1, years = 1)
+doAssert(initInterval(microseconds = 25_000_000) == initInterval(seconds = 25))
+doAssert(initInterval(seconds = 65) == initInterval(seconds = 5, minutes = 1))
+doAssert(initInterval(hours = 25) == initInterval(hours = 1, days = 1))
+doAssert(initInterval(months = 13) == initInterval(months = 1, years = 1))
 
 # Bug with adding a day to a Time
 let day = 24.hours
 let tomorrow = getTime() + day
-doAssert (tomorrow - getTime()).totalSeconds() == 60*60*24
+doAssert((tomorrow - getTime()).totalSeconds() == 60*60*24)
 
-doAssert milliseconds(1000 * 60) == minutes(1)
-doAssert milliseconds(1000 * 60 * 60) == hours(1)
-doAssert milliseconds(1000 * 60 * 60 * 24) == days(1)
-doAssert seconds(60 * 60) == hours(1)
-doAssert seconds(60 * 60 * 24) == days(1)
-doAssert seconds(60 * 60 + 65) == (hours(1) + minutes(1) + seconds(5))
+doAssert(milliseconds(1000 * 60) == minutes(1))
+doAssert(milliseconds(1000 * 60 * 60) == hours(1))
+doAssert(milliseconds(1000 * 60 * 60 * 24) == days(1))
+doAssert(seconds(60 * 60) == hours(1))
+doAssert(seconds(60 * 60 * 24) == days(1))
+doAssert(seconds(60 * 60 + 65) == (hours(1) + minutes(1) + seconds(5)))
 
 # Bug with parse not setting DST properly if the current local DST differs from
 # the date being parsed. Need to test parse dates both in and out of DST. We
@@ -202,19 +202,19 @@ doAssert seconds(60 * 60 + 65) == (hours(1) + minutes(1) + seconds(5))
 # also assume that Jan. 1 and Jun. 1 will have differing isDST values.
 # let dstT1 = parse("2016-01-01 00:00:00", "yyyy-MM-dd HH:mm:ss")
 # let dstT2 = parse("2016-06-01 00:00:00", "yyyy-MM-dd HH:mm:ss")
-# doAssert dstT1 == getLocalTime(toTime(dstT1))
-# doAssert dstT2 == getLocalTime(toTime(dstT2))
+# doAssert(dstT1 == getLocalTime(toTime(dstT1)))
+# doAssert(dstT2 == getLocalTime(toTime(dstT2)))
 
 # Comparison between Time objects should be detected by compiler
 # as 'noSideEffect'.
 proc cmpTimeNoSideEffect(t1: DateTime, t2: DateTime): bool {.noSideEffect.} =
   result = t1 == t2
-doAssert cmpTimeNoSideEffect(0.fromSeconds, 0.fromSeconds)
+doAssert(cmpTimeNoSideEffect(0.fromSeconds, 0.fromSeconds))
 # Additionally `==` generic for seq[T] has explicit 'noSideEffect' pragma
 # so we can check above condition by comparing seq[Time] sequences
 let seqA: seq[DateTime] = @[]
 let seqB: seq[DateTime] = @[]
-doAssert seqA == seqB
+doAssert(seqA == seqB)
 
 for tz in [
     (0, "+0", "+00", "+00:00"), # UTC
@@ -226,24 +226,24 @@ for tz in [
   #let ti = TimeInfo(monthday: 1, timezone: tz[0])
   let ti = initZonedDateTime(day = 1, utcoffset = tz[0], offsetKnown = true,
                              isDST = false, tzinfo=nil)
-  doAssert ti.format("z") == tz[1]
-  doAssert ti.format("zz") == tz[2]
-  doAssert ti.format("zzz") == tz[3]
+  doAssert(ti.format("z") == tz[1])
+  doAssert(ti.format("zz") == tz[2])
+  doAssert(ti.format("zzz") == tz[3])
 
 block formatDst:
   var ti = initZonedDateTime(day = 1, isDst = true, tzinfo=nil)
 
   # BST
   ti.utcoffset = 0
-  doAssert ti.format("z") == "+1"
-  doAssert ti.format("zz") == "+01"
-  doAssert ti.format("zzz") == "+01:00"
+  doAssert(ti.format("z") == "+1")
+  doAssert(ti.format("zz") == "+01")
+  doAssert(ti.format("zzz") == "+01:00")
 
   # EDT
   ti.utcoffset = 5 * 60 * 60
-  doAssert ti.format("z") == "-4"
-  doAssert ti.format("zz") == "-04"
-  doAssert ti.format("zzz") == "-04:00"
+  doAssert(ti.format("z") == "-4")
+  doAssert(ti.format("zz") == "-04")
+  doAssert(ti.format("zzz") == "-04:00")
 
 block dstTest:
   let nonDst = initZonedDateTime(year = 2015, month = 1, day = 1,
@@ -254,9 +254,9 @@ block dstTest:
   # note that both isDST == true and isDST == false are valid here because
   # DST is in effect on January 1st in some southern parts of Australia.
   # FIXME: Fails in UTC
-  # doAssert nonDst.toTime() - dst.toTime() == 3600
-  doAssert nonDst.format("z") == "+0"
-  doAssert dst.format("z") == "+1"
+  # doAssert(nonDst.toTime() - dst.toTime() == 3600)
+  doAssert(nonDst.format("z") == "+0")
+  doAssert(dst.format("z") == "+1")
 
 
   # this is not true in ZonedDateTime, here parsing does nothing like
@@ -282,16 +282,16 @@ block dstTest:
   let
     localJan = parsedJan.astimezone(initTZInfo("/etc/localtime", tzOlson))
     localJul = parsedJul.settimezone(initTZInfo("/etc/localtime", tzOlson))
-  doAssert toUTCTime(parsedJan) == 1451962800.float64
-  doAssert toUTCTime(parsedJul) == 1467342000.float64
-  doAssert toUTCTime(localJan)  == 1451962800.float64
-  doAssert toUTCTime(localJul)  == 1467342000.float64 - 3600.0
-  doAssert localJan.isDST == false
-  doAssert localJul.isDST == true
+  doAssert(toUTCTime(parsedJan) == 1451962800.float64)
+  doAssert(toUTCTime(parsedJul) == 1467342000.float64)
+  doAssert(toUTCTime(localJan)  == 1451962800.float64)
+  doAssert(toUTCTime(localJul)  == 1467342000.float64 - 3600.0)
+  doAssert(localJan.isDST == false)
+  doAssert(localJul.isDST == true)
 
 
 block countLeapYears:
   # 1920, 2004 and 2020 are leap years, and should be counted starting at the following year
-  doAssert countLeapYears(1920) + 1 == countLeapYears(1921)
-  doAssert countLeapYears(2004) + 1 == countLeapYears(2005)
-  doAssert countLeapYears(2020) + 1 == countLeapYears(2021)
+  doAssert(countLeapYears(1920) + 1 == countLeapYears(1921))
+  doAssert(countLeapYears(2004) + 1 == countLeapYears(2005))
+  doAssert(countLeapYears(2020) + 1 == countLeapYears(2021))

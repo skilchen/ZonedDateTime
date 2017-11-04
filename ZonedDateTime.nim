@@ -3685,9 +3685,9 @@ when isMainModule:
   echo "total seconds since Unix epoch: ", td.totalSeconds()
   echo "epd + ts ", fromTimeStamp(epd.toTimeStamp() + initTimeStamp(seconds = td.totalSeconds()))
   echo "epd + td ", epd + td
-  assert epd + td == current
+  doAssert(epd + td == current)
   echo "now - td ", current - td
-  assert current - td == epd
+  doAssert(current - td == epd)
 
   echo ""
   echo epd.toTimeStamp()
@@ -3705,16 +3705,16 @@ when isMainModule:
   ti = epd.toTimeInterval() - current.toTimeInterval()
   echo $ti
   echo "now + ti: ", current + ti, " == ", epd
-  assert current + ti == epd
+  doAssert(current + ti == epd)
   echo "epd - ti: ", epd - ti, " == ", current
-  assert(epd - ti == current)
+  doAssert(epd - ti == current)
 
   echo ""
   echo "can we initialize a TimeDelta value from a known number of seconds"
   td = initTimeDelta(seconds=td.totalSeconds, microseconds=td.microseconds.float64)
   echo td
   echo epd + td, " ", current
-  assert epd + td == current
+  doAssert(epd + td == current)
 
   # experiments with fractional values used to initialize
   # a TimeDelta and playing with relative date/time differences
@@ -3736,31 +3736,31 @@ when isMainModule:
   var g = fromUnixEpochSeconds(3_000_000_000.0)
   echo ""
   echo "one billion seconds since epoch:   ", $a, " time delta: ", $(a - epd)
-  assert int((a - epd).totalSeconds()) == 1_000_000_000
+  doAssert(int((a - epd).totalSeconds()) == 1_000_000_000)
   echo "1_111_111_111 seconds since epoch: ", $b, " time delta: ", $(b - epd)
-  assert int((b - epd).totalSeconds()) == 1_111_111_111
+  doAssert(int((b - epd).totalSeconds()) == 1_111_111_111)
   echo "1.5 billion seconds since epoch:   ", $c, " time delta: ", $(c - epd)
-  assert int((c -  epd).totalSeconds()) == 1_234_567_890
+  doAssert(int((c -  epd).totalSeconds()) == 1_234_567_890)
   echo "1_234_567_890 seconds since epoch: ", $d, " time delta: ", $(d - epd)
-  assert int((d - epd).totalSeconds()) == 1_500_000_000
+  doAssert(int((d - epd).totalSeconds()) == 1_500_000_000)
   echo "2   billion seconds since epoch:   ",   $e, " time delta: ", $(e - epd)
-  assert int((e - epd).totalSeconds()) == 2_000_000_000
+  doAssert(int((e - epd).totalSeconds()) == 2_000_000_000)
   echo "2.5 billion seconds since epoch:   ",   $f, " time delta: ", $(f - epd)
-  assert((f - epd).totalSeconds() == 2_500_000_000.0)
+  doAssert((f - epd).totalSeconds() == 2_500_000_000.0)
   echo "3   billion seconds since epoch:   ", $e, " time delta: ", $(e - epd)
-  assert((g - epd).totalSeconds() == 3_000_000_000.0)
+  doAssert((g - epd).totalSeconds() == 3_000_000_000.0)
 
   echo "check dates from wikipedia page about Unix Time"
-  assert $a == "2001-09-09T01:46:40"
-  assert $b == "2005-03-18T01:58:31"
-  assert $c == "2009-02-13T23:31:30"
-  assert $d == "2017-07-14T02:40:00"
-  assert $e == "2033-05-18T03:33:20"
+  doAssert($a == "2001-09-09T01:46:40")
+  doAssert($b == "2005-03-18T01:58:31")
+  doAssert($c == "2009-02-13T23:31:30")
+  doAssert($d == "2017-07-14T02:40:00")
+  doAssert($e == "2033-05-18T03:33:20")
 
   echo ""
   echo "the end of the Unix signed 32bit time:"
   e = fromUnixEpochSeconds(pow(2.0, 31))
-  assert $e == "2038-01-19T03:14:08"
+  doAssert($e == "2038-01-19T03:14:08")
   echo $e, " ", ($(e.toTimeInterval() - current.toTimeInterval())), " from now"
   echo "using the new loopless toTimeInterval(dt1, dt2)"
   echo $e, " ", toTimeInterval(e, current)
@@ -3769,17 +3769,17 @@ when isMainModule:
   e = fromUnixEpochSeconds(-pow(2.0, 31))
   echo $e, " ", ($(e.toTimeInterval() - current.toTimeInterval())), " from now"
   echo toTimeInterval(e, current)
-  assert $e == "1901-12-13T20:45:52"
-  assert ((e + toTimeInterval(e, current)) - current).totalSeconds() < 0.000002
-  assert current - toTimeInterval(e, current) == e
-  assert e - toTimeInterval(current, e) == current
-  assert current + toTimeInterval(current, e) == e
+  doAssert($e == "1901-12-13T20:45:52")
+  doAssert(((e + toTimeInterval(e, current)) - current).totalSeconds() < 0.000002)
+  doAssert(current - toTimeInterval(e, current) == e)
+  doAssert(e - toTimeInterval(current, e) == current)
+  doAssert(current + toTimeInterval(current, e) == e)
   echo ""
   echo "the end of the Unix unsigned 32bit time:"
   e = fromUnixEpochSeconds(pow(2.0, 32) - 1)
   echo $e, " ", ($(e.toTimeInterval() - current.toTimeInterval())), " from now"
   echo toTimeInterval(e, current)
-  assert $e == "2106-02-07T06:28:15"
+  doAssert($e == "2106-02-07T06:28:15")
   when not defined(js):
     echo "the end of the Unix signed 64bit time:"
     echo "first calculate the maximal date from a signed 64bit number of seconds since 0001-01-01:"
@@ -3799,7 +3799,7 @@ when isMainModule:
     var lycount = countLeapYears(maxdate.year)
     echo "leap years before the end of 64bit time: ", lycount
 
-    assert $maxdate == "292277026596-12-04T15:30:07"
+    doAssert($maxdate == "292277026596-12-04T15:30:07")
 
   # playing with the surprisingly powerful idea to
   # convert DateTime values into time differences
@@ -3812,16 +3812,16 @@ when isMainModule:
   echo "time interval ti between ", a, " and ", b
   echo ti
   echo "a + ti:  ", a + ti, " == ", b
-  assert $(a + ti) == $b
+  doAssert($(a + ti) == $b)
   echo "b - ti:  ", b - ti, " == ", a
-  assert $(b - ti) == $a
+  doAssert($(b - ti) == $a)
   echo "---"
   echo "time interval ti2 between ", a, " and ", c
   echo ti2
   echo "a + ti2: ", a + ti2, " == ", c
-  assert $(a + ti2) == $c
+  doAssert($(a + ti2) == $c)
   echo "c - ti2: ", c - ti2, " == ", a
-  assert $(c - ti2) == $a
+  doAssert($(c - ti2) == $a)
 
   echo "---"
 

@@ -35,9 +35,9 @@ var LeapSecondData = [
 ]
 
 proc test_format() =
-  var tz = initTZInfo("/usr/share/zoneinfo/right/UTC", tzOlson)
-  var nyc = initTZInfo("/usr/share/zoneinfo/right/America/New_York", tzOlson)
-  var bru = initTZInfo("/usr/share/zoneinfo/right/Europe/Berlin", tzOlson)
+  var tz = initTZInfo("right/UTC", tzOlson)
+  var nyc = initTZInfo("right/America/New_York", tzOlson)
+  var bru = initTZInfo("right/Europe/Berlin", tzOlson)
   for lsinfo in LeapSecondData:
     let ttime = lsinfo[0]
     var ep_ttime = ttime + NTP_EPOCH

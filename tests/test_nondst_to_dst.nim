@@ -13,11 +13,11 @@ baseDate = baseDate.astimezone(zhr)
 echo baseDate
 echo "---"
 
-assert baseDate.isDST == false
+doAssert(baseDate.isDST == false)
 
 for i in 1..10:
   let t = baseDate + i.microseconds
   echo t
   if t.microsecond == 0:
-    assert t.hour == 3, "hour should jump to 3"
-    assert t.isDST == true, "isDST flag must be set to true"
+    doAssert(t.hour == 3, "hour should jump to 3")
+    doAssert(t.isDST == true, "isDST flag must be set to true")

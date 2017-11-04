@@ -34,7 +34,7 @@ var LeapSecondData = [
 ]
 
 proc test_ls_transitions() =
-  let tz = initTZInfo("/usr/share/zoneinfo/right/Zulu", tzOlson)
+  let tz = initTZInfo("right/Zulu", tzOlson)
 
   let base_lsinfo = LeapSecondData[0]
 
@@ -53,17 +53,17 @@ proc test_ls_transitions() =
       case i
       of 1:
         echo tmp
-        assert tmp.second == 59
+        doAssert(tmp.second == 59)
       of 2:
         echo tmp
-        assert tmp.second == 60
+        doAssert(tmp.second == 60)
       of 3:
         echo tmp
-        assert tmp.second == 0
+        doAssert(tmp.second == 0)
       of 4:
         echo tmp
       else:
-        assert false
+        doAssert(false)
 
 when not defined(useLeapSeconds):
   {.error: "works only if compiled with -d:useLeapSeconds".}

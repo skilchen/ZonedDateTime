@@ -35,7 +35,7 @@ var LeapSecondData = [
 ]
 
 proc test_strftime() =
-  var tz = initTZInfo("/usr/share/zoneinfo/right/UTC", tzOlson)
+  var tz = initTZInfo("right/UTC", tzOlson)
 
   for lsinfo in LeapSecondData:
     let ttime = lsinfo[0]

@@ -10,10 +10,9 @@ license       = "MIT"
 
 
 # Dependencies
-requires "nim >= 0.17.3"
+requires "nim >= 0.17.2"
 requires "zip >= 0.1.1"
 requires "struct >= 0.1.1"
-requires "struct"
 
 
 task tests, "Run some DateTime examples and tests":

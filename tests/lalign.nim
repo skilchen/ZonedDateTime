@@ -7,10 +7,10 @@ proc lalign*(s: string, count: Natural, padding = ' '): string {.noSideEffect.} 
   ## proc <#align>`_. Example:
   ##
   ## .. code-block:: nim
-  ##   assert alignLeft("abc", 4) == "abc "
-  ##   assert alignLeft("a", 0) == "a"
-  ##   assert alignLeft("1232", 6) == "1232  "
-  ##   assert alignLeft("1232", 6, '#') == "1232##"
+  ##   doAssert(alignLeft("abc", 4) == "abc ")
+  ##   doAssert(alignLeft("a", 0) == "a")
+  ##   doAssert(alignLeft("1232", 6) == "1232  ")
+  ##   doAssert(alignLeft("1232", 6, '#') == "1232##")
   if s.len < count:
     result = newString(count)
     if s.len > 0:

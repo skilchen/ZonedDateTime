@@ -34,7 +34,7 @@ var LeapSecondData = [
 ]
 
 proc test_86401_days() =
-  var tz = initTZInfo("/usr/share/zoneinfo/right/UTC", tzOlson)
+  var tz = initTZInfo("right/UTC", tzOlson)
 
   for lsinfo in LeapSecondData[2..^1]:
     let ttime = lsinfo[0]
@@ -45,12 +45,12 @@ proc test_86401_days() =
     var after = initZonedDateTime(b.year, b.month, b.day + 1, b.hour, b.minute, b.second, b.microsecond, tzinfo=tz)
     var td = after - before
     echo before, " ", after, " ", td.totalSeconds()
-    assert td.totalSeconds() == 86401
+    doAssert(td.totalSeconds() == 86401)
 
     after = before + 1.years
     td = after - before
     echo before, " ", after, " ", td
-    assert td.days in {365, 366} and td.seconds > 0
+    doAssert(td.days in {365, 366} and td.seconds > 0)
 
     after = before + 10.years
     td = after - before
@@ -63,7 +63,7 @@ proc test_86401_days() =
   var after = initZonedDateTime(localFromTime(LeapSecondData[^1][0]  + full_corr + NTP_EPOCH, tz), tz)
   let td = after - before
   echo before, " ", after, " ", td, " ", td.seconds, " leap seconds in between..."
-  assert td.seconds == full_corr - 1
+  doAssert(td.seconds == full_corr - 1)
 
 when not defined(useLeapSeconds):
   {.error: "works only if compiled with: -d:useLeapSeconds".}
