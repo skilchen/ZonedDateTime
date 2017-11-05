@@ -3666,11 +3666,7 @@ proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
 
 
 when defined(js):
-  proc paramStr*(n: int): string =
-    var args {.importc.}: seq[cstring]
-    {.emit: "`args` = process.argv;" .}
-    return $args[n+1]
-
+  import jsParams
 
 when isMainModule:
   # some experiments and tests ...

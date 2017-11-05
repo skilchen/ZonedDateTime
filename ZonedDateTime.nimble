@@ -29,3 +29,9 @@ task test, "run all available tests":
     if fn.endsWith(".nim"):
       exec "nim c -d:testing -r " & fn
 
+task examples, "run my silly date arithmetic examples":
+  for fn in listFiles("examples"):
+    if fn.endsWith(".nim") and fn.extractFileName.startsWith("display"):
+      echo fn.extractFileName()
+      exec "nim c -r " & fn & " 2017 2020"
+      echo ""
