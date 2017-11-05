@@ -70,6 +70,9 @@ from times import epochTime
 
 import streams
 
+export epochTime
+
+
 when not defined(js):
   import struct
   import os, ospaths
@@ -3595,35 +3598,53 @@ proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateT
   ## return a `DateTime` with the same date/time as `dt` but with the timezone settings
   ## changed to `tzname` of zone type `tztype`
   ##
+  var tzinfo: TZInfo
   try:
-    let tzinfo = getTZInfo(tzname, tztype)
+    tzinfo = getTZInfo(tzname, tztype)
     result = setTimeZone(dt, tzinfo)
   except:
-    when defined(js):
-      # to silence a warning abount GC-unsafety
-      # echo  getCurrentExceptionMsg()
-      echo "failed to setTimezone to " & tzname
-    else:
-      stderr.write(getCurrentExceptionMsg())
-      stderr.write("\L")
-    result = dt
+    try:
+      if tzType == tzPosix:
+        tzinfo = getTZInfo(tzname, tzOlson)
+      else:
+        tzinfo = getTZInfo(tzname, tzPosix)
+      result = setTimeZone(dt, tzinfo)
+    except:
+      when defined(js):
+        # to silence a warning abount GC-unsafety
+        # echo  getCurrentExceptionMsg()
+        echo "failed to setTimezone to " & tzname
+      else:
+        stderr.write(getCurrentExceptionMsg())
+        stderr.write("\L")
+      result = dt
+
 
 proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix): ZonedDateTime =
   ## return a `ZonedDateTime` with the same date/time as `zdt` but with the timezone settings
   ## changed to `tzname` of zone type `tztype`
   ##
-  let dt = zdt.datetime
+  var dt = zdt.datetime
+  var tzinfo: TZInfo
   try:
-    let tzinfo = getTZInfo(tzname, tztype)
+    result.tzinfo = getTZInfo(tzname, tztype)
     result.datetime = setTimeZone(dt, tzinfo)
-    result.tzinfo = tzinfo
   except:
-    when defined(js):
-      echo getCurrentExceptionMsg()
-    else:
-      stderr.write(getCurrentExceptionMsg())
-      stderr.write("\L")
-    result = zdt
+    try:
+      if tzType == tzPosix:
+        result.tzinfo = getTZInfo(tzname, tzOlson)
+      else:
+        result.tzinfo = getTZInfo(tzname, tzPosix)
+      result.datetime = setTimeZone(dt, tzinfo)
+    except:
+      when defined(js):
+        # to silence a warning abount GC-unsafety
+        # echo  getCurrentExceptionMsg()
+        echo "failed to setTimezone to " & tzname
+      else:
+        stderr.write(getCurrentExceptionMsg())
+        stderr.write("\L")
+      result = zdt
 
 
 proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
