@@ -248,6 +248,8 @@ proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTi
 proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
 proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe.}
 proc getWeekDay*(dt: DateTime): int {.gcsafe.}
+proc toOrdinal*(dt: DateTime): int64 {.gcsafe.}
+proc fromOrdinal*(ordinal: int64): DateTime {.gcsafe.}
 
 proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
 proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
@@ -255,6 +257,8 @@ proc `+`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime {.gcsafe.}
 proc `+`*(zdt: ZonedDateTime, ts: TimeStamp): ZonedDateTime {.gcsafe.}
 proc `+`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
 proc `-`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
+proc `-`*(x, y: DateTime): TimeDelta {.gcsafe.}
+
 
 when defined(useLeapSeconds):
   proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int {.gcsafe.}
@@ -394,20 +398,40 @@ proc `$`*(td: TimeDelta): string =
 proc `$`*(ti: TimeInterval): string =
   ## string representation of a TimeInterval
   result = ""
-  result.add("years: ")
-  result.add($ti.years.int)
-  result.add(", months: ")
-  result.add($ti.months.int)
-  result.add(", days: ")
-  result.add($ti.days.int)
-  result.add(", hours: ")
-  result.add($ti.hours.int)
-  result.add(", minutes: ")
-  result.add($ti.minutes.int)
-  result.add(", seconds: ")
-  result.add($ti.seconds.int)
-  result.add(", microseconds: ")
-  result.add($ti.microseconds.int)
+  if ti.years != 0:
+    result.add("years: ")
+    result.add($ti.years.int)
+  if ti.months != 0:
+    if len(result) > 0:
+      result.add(", ")
+    result.add("months: ")
+    result.add($ti.months.int)
+  if ti.days != 0:
+    if len(result) > 0:
+      result.add(", ")
+    result.add("days: ")
+    result.add($ti.days.int)
+  if ti.hours != 0:
+    if len(result) > 0:
+      result.add(", ")
+    result.add("hours: ")
+    result.add($ti.hours.int)
+  if ti.minutes != 0:
+    if len(result) > 0:
+      result.add(", ")
+    result.add("minutes: ")
+    result.add($ti.minutes.int)
+  if ti.seconds != 0:
+    if len(result) > 0:
+      result.add(", ")
+    result.add("seconds: ")
+    result.add($ti.seconds.int)
+  if ti.microseconds != 0:
+    if len(result) > 0:
+      result.add(", ")
+  if len(result) == 0 or ti.microseconds != 0:
+    result.add("microseconds: ")
+    result.add($ti.microseconds.int)
 
 
 proc `$`*(isod: ISOWeekDate): string =
@@ -425,7 +449,6 @@ proc `$`*(isod: ISOWeekDate): string =
   result.add(intToStr(isod.week, 2))
   result.add("-")
   result.add($isod.weekday)
-
 
 
 proc initDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
@@ -634,7 +657,7 @@ proc `*`*(ti: TimeInterval, n: SomeNumber): TimeInterval =
                             ti.microseconds * n)
 
 template `*`*(n: SomeNumber, ti: TimeInterval): TimeInterval =
-  ti * i
+  ti * n
 
 
 proc `/`*(ti: TimeInterval, n: SomeNumber): TimeInterval =
@@ -816,6 +839,129 @@ proc trunc*(dt: DateTime, unit: TimeAmount): DateTime =
     result = initDateTime(dt.year - modulo(dt.year, 100), 1, 1)
   else:
     discard
+
+
+proc floor*(dt: DateTime, ti: TimeInterval): DateTime =
+  ## Returns the nearest `DateTime` less than or equal to `dt` at resolution `ti`.
+  ##
+  ## inspired by the Dates module from julia
+  ##
+  ## .. code-block:: nim
+  ## echo floor(initDateTime(1985, 8, 16), 1.months)
+  ## 1985-08-01
+  ##
+  ## echo  floor(initDateTime(2013, 2, 13, 0, 31, 20), 15.minutes)
+  ## 2013-02-13T00:30:00
+  ##
+  ## echo floor(DateTime(2016, 8, 6, 12, 0, 0), 1.days)
+  ## 2016-08-06T00:00:00
+  ##
+
+  # it seems that in the iso 8601 world one uses
+  # 0000-01-01 as the basis for date rounding. This
+  # is day number -365 in the proleptic gregorian calendar
+  const roundingEpoch = -365
+  const roundingEpochSeconds = roundingEpoch * OneDay
+
+  if ti.years > 0:
+    let target_year = dt.year - int(modulo(dt.year, ti.years))
+    return initDateTime(year = target_year, month = 1, day = 1)
+  if ti.months > 0:
+    let months_since_epoch = 12 * dt.year + dt.month - 1
+    let month_offset = months_since_epoch - int(modulo(months_since_epoch, ti.months))
+    let target_month = int(modulo(month_offset, 12)) + 1
+    var target_year = tdiv(month_offset, 12)
+    if month_offset < 0 and target_month != 1:
+      target_year -= 1
+    return initDateTime(year = target_year, month = target_month, day = 1)
+  if ti.days > 0:
+    let days = toOrdinal(dt) - roundingEpoch
+    return fromOrdinal(days - int(modulo(days, ti.days)) + roundingEpoch)
+
+  if ti.hours > 0 or ti.minutes > 0 or ti.seconds > 0:
+    var ts = toTimeStamp(dt)
+    let dseconds = ts.seconds - roundingEpochSeconds
+    var iseconds = 0.0
+    if ti.hours > 0:
+      iseconds = ti.hours * 3600
+    elif ti.minutes > 0:
+      iseconds = ti.minutes * 60
+    elif ti.seconds > 0:
+      iseconds = ti.seconds
+    if iseconds > 0:
+      ts.seconds = dseconds - modulo(dseconds, iseconds) + roundingEpochSeconds
+      ts.microseconds = 0
+      return fromTimeStamp(ts)
+
+  raise newException(ValueError, "invalid timeinterval given to floor")
+
+
+proc ceil*(dt: DateTime, ti: TimeInterval): DateTime =
+  ## Returns the nearest `DateTime` greater than or equal to `dt` at resolution `ti`.
+  ## At least one non-zero value must be defined in `ti` otherwise we raise an exception.
+  ## Only the value with the largest unit in `ti` is used for the calculation.
+  ##
+  ## inspired by the Dates module from julia
+  ##
+  ## .. code-block:: nim
+  ## echo ceil(initDateTime(1985, 8, 16), 1.months)
+  ## 1985-09-01T00:00:00
+  ##
+  ## echo ceil(initDateTime(2013, 2, 13, 0, 31, 20), 15.minutes)
+  ## 2013-02-13T00:45:00
+  ##
+  ## echo ceil(initDateTime(2016, 8, 6, 12, 0, 0), 1.days)
+  ## 2016-08-07T00:00:00
+  ##
+
+  let f = floor(dt, ti)
+  if dt == f:
+    result = f
+  else:
+    result = f + ti
+
+
+proc floorceil*(dt: DateTime, ti: TimeInterval): (DateTime, DateTime) =
+  ## Simultaneously return the `floor` and `ceil` of a `DateTime` at resolution `ti`.
+  ## More efficient than calling both `floor` and `ceil` individually.
+  ##
+  ## inspired by the Dates module from julia
+  ##
+  let f = floor(dt, ti)
+  result[0] = f
+  if dt == f:
+    result[1] = f
+  else:
+    result[1] = f + ti
+
+
+template `<`*(x, y: TimeDelta): bool =
+  x.totalSeconds() < y.totalSeconds()
+
+
+proc round*(dt: DateTime, ti:TimeInterval): DateTime =
+  ## Returns the `DateTime` nearest to `dt` at resolution `ti`. By default
+  ## (`RoundNearestTiesUp`), ties (e.g., rounding 9:30 to the nearest hour)
+  ## will be rounded up.
+  ##
+  ## inspired by the Dates module from julia
+  ##
+  ## .. code-block:: nim
+  ## echo  round(initDateTime(1985, 8, 16), 1.months)
+  ## 1985-08-01
+  ##
+  ## echo round(initDateTime(2013, 2, 13, 0, 31, 20), 15.minutes)
+  ## 2013-02-13T00:30:00
+  ##
+  ## echo round(initDateTime(2016, 8, 6, 12, 0, 0), 1.days)
+  ## 2016-08-07T00:00:00
+  ##
+
+  let (f, c) = floorceil(dt, ti)
+  if (dt - f) < (c - dt):
+    result = f
+  else:
+    result = c
 
 
 proc toTimeStamp*(td: TimeDelta): TimeStamp =
@@ -1139,6 +1285,7 @@ proc toISOWeekDate*(dt: DateTime): ISOWeekDate =
   result.year = year
   result.week = week
   result.weekday = day
+
 
 proc toISOWeekDate*(zdt: ZonedDateTime): ISOWeekDate =
   result = toISOWeekDate(zdt.datetime)
@@ -1748,6 +1895,20 @@ proc getWeekDay*(dt: DateTime): int =
   ## modulo 7 the get the corresponding weekday number.
   ##
   modulo(toOrdinal(dt), 7)
+
+
+proc getWeekDayInMonth*(dt: DateTime): int =
+  let d = dt.day
+  if d < 8:
+    result = 1
+  elif d < 15:
+    result = 2
+  elif d < 22:
+    result = 3
+  elif d < 29:
+    result = 4
+  else:
+    result = 5
 
 
 proc getYearDay*(dt: DateTime): int =
