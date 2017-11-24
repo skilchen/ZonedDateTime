@@ -66,6 +66,7 @@
 import strutils
 import parseutils
 import math
+import tables
 from times import epochTime
 
 import streams
@@ -2260,9 +2261,36 @@ proc parse*(value, layout: string): DateTime =
 const WeekDayNames: array[7, string] = ["Sunday", "Monday", "Tuesday", "Wednesday",
      "Thursday", "Friday", "Saturday"]
 
+proc weekDayNameToValue(name: string): int =
+  let name = toLowerAscii(name)
+  case name
+  of "sun", "sunday":
+    return 0
+  of "mon", "monday":
+    return 1
+  of "tue", "tuesday":
+    return 2
+  of "wed", "wednesday":
+    return 3
+  of "thu", "thursday":
+    return 4
+  of "fri", "friday":
+    return 5
+  of "sat", "saturday":
+    return 6
+
+
 const MonthNames: array[0..12, string] = ["", "January", "February", "March",
       "April", "May", "June", "July", "August", "September", "October",
       "November", "December"]
+
+const MonthValues: Table[string, int] =
+  {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+   "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}.toTable()
+
+
+proc monthNameToValue(name: string): int =
+  result = getOrDefault(MonthValues, toLowerAscii(name)[0..2])
 
 
 proc formatToken(dt: DateTime, token: string, buf: var string) =
@@ -2438,6 +2466,261 @@ proc format*(dt: DateTime, f: string): string =
 template format*(zdt: ZonedDateTime, fmtstr: string): string =
   format(zdt.datetime, fmtstr)
 
+proc strptime*(value: string, fmtstr: string, twoDigitYearFlag=false): DateTime =
+  var y, m, d, h, mi, s, ms = 0
+  m = 1
+  d = 1
+  var hoff, moff, soff = 0
+
+  var i = 0 # index into fmtstr
+  var j = 0 # index into value
+  var x = 0
+  var numberstr = ""
+  var namestr = ""
+  let fmtLength = len(fmtstr)
+  let vLength = len(value)
+  var isISOWeekDate = false
+  var week = 0
+  var weekday = 0
+  while i < fmtLength:
+    if fmtstr[i] == '%':
+      if i + 1 == fmtLength:
+        break
+      inc(i)
+      case fmtstr[i]
+      of 'a', 'A':
+        inc(i)
+        if value[j] notin {'a'..'z', 'A'..'Z'}:
+          x = parseUntil(value, numberstr, {'a'..'z', 'A'..'Z'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid string found to parse as dayname")
+        x = parseWhile(value, namestr, {'a'..'z','A'..'Z'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid string found to parse as dayname")
+        j += x
+        namestr = toLowerAscii(namestr)
+        x = weekDayNameToValue(namestr[0..2])
+        if x == 0:
+          raise newException(ValueError, "unknown dayname: " & namestr)
+      of 'b', 'B':
+        inc(i)
+        if value[j] notin {'a'..'z', 'A'..'Z'}:
+          x = parseUntil(value, numberstr, {'a'..'z', 'A'..'Z'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid string found to parse as month")
+        x = parseWhile(value, namestr, {'a'..'z','A'..'Z'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid string found to parse as month")
+        namestr = toLowerAscii(namestr)
+        m = monthNameToValue(namestr[0..2])
+        if m == 0:
+          raise newException(ValueError, "unknown month: " & namestr)
+        j += x
+      of 'y', 'Y', 'G':
+        inc(i)
+        if fmtstr[i] == 'G':
+          isISOWeekDate = true
+        var sign = 1
+        if value[j] notin {'-', '0'..'9'}:
+          x = parseUntil(value, numberstr, {'-', '0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as year")
+        if value[j] == '-':
+          if i > 3 and fmtstr[i - 3] != '-':
+            sign = -1
+          inc(j)
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as year")
+        y = parseInt(numberstr) * sign
+        if twoDigitYearFlag and y < 100:
+          let currentYear = now().year
+          y = int(currentYear - currentYear mod 100 + y)
+        j += x
+      of 'm':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as month")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as month")
+        m = parseInt(numberstr)
+        if m < 1 or m > 12:
+          raise newException(ValueError, "invalid month: " & numberstr)
+        j += x
+      of 'd':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as day")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as day")
+        d = parseInt(numberstr)
+        if d < 1 or d > 31:
+          raise newException(ValueError, "invalid day: " & numberstr)
+        j += x
+      of 'V':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as ISO week")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as ISO week")
+        week = parseInt(numberstr)
+        if week < 1 or week > 53:
+          raise newException(ValueError, "invalid ISO week: " & numberstr)
+        isISOWeekDate = true
+        j += x
+      of 'u':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as ISO weekday")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as ISO weekday")
+        weekday = parseInt(numberstr)
+        if weekday < 1 or weekday > 7:
+          raise newException(ValueError, "invalid ISO weekday: " & numberstr)
+        isISOWeekDate = true
+        j += x
+
+      of 'h', 'H':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as hour")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as hour")
+        h = parseInt(numberstr)
+        if h < 0 or h > 24:
+          raise newException(ValueError, "invalid hour: " & numberstr)
+        j += x
+      of 'M':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as minute")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as minute")
+        mi = parseInt(numberstr)
+        if mi < 1 or mi > 59:
+          raise newException(ValueError, "invalid minute: " & numberstr)
+        j += x
+      of 's', 'S':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as second")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as second")
+        s = parseInt(numberstr)
+        if s < 0 or s > 61:
+          raise newException(ValueError, "invalid second: " & numberstr)
+        j += x
+      of 'f':
+        inc(i)
+        if value[j] notin {'0'..'9'}:
+          x = parseUntil(value, numberstr, {'0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as microsecond")
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as microsecond")
+        ms = parseInt(numberstr)
+        if ms < 0 or ms > 999999:
+          raise newException(ValueError, "invalid microsecond: " & numberstr)
+        j += x
+      of 'z', 'Z':
+        inc(i)
+        if value[j] notin {'+','-','0'..'9'}:
+          x = parseUntil(value, numberstr, {'+','-','0'..'9'}, j)
+          j += x
+          if j >= vLength:
+            raise newException(ValueError, "no valid number found to parse as utc offset")
+        var sign = 1
+        if value[j] in {'+','-'}:
+          if value[j] == '-':
+            sign = -1
+          inc(j)
+        x = parseWhile(value, numberstr, {'0'..'9'}, j)
+        if x == 0:
+          raise newException(ValueError, "no valid number found to parse as utc offset")
+        j += x
+        hoff = parseInt(numberstr[0..1]) * sign
+        if len(numberstr) > 2:
+          moff = parseInt(numberstr[2..3])
+          if len(numberstr) > 4:
+            soff = parseInt(numberstr[4..^1])
+        elif value[j] == ':':
+          inc(j)
+          x = parseWhile(value, numberstr, {'0'..'9'}, j)
+          if x == 0:
+            raise newException(ValueError, "no valid number found to parse as utc minute offset")
+          j += x
+          moff = parseInt(numberstr)
+          if value[j] == ':':
+            inc(j)
+            x = parseWhile(value, numberstr, {'0'..'9'}, j)
+            if x == 0:
+              raise newException(ValueError, "no valid number found to parse as utc second offset")
+            j += x
+            soff = parseInt(numberstr)
+      else:
+        discard
+    elif fmtstr[i] == '$':
+      inc(i)
+      if len(fmtstr[i..^1]) >= 3 and fmtstr[i..i+2] == "iso":
+        return strptime(value, "%Y-%m-%dT%H:%M:%S")
+      elif len(fmtstr[i..^1]) >= 4 and fmtstr[i..i+3] == "wiso":
+        return strptime(value, "%G-W%V-%u")
+      elif len(fmtstr[i..^1]) >= 4 and fmtstr[i..i+3] == "http":
+        return strptime(value, "%a, %d %b %Y %H:%M:%S")
+      elif len(fmtstr[i..^1]) >=  5 and fmtstr[i..i+4] == "ctime":
+        return strptime(value, "%a %b %d %H:%M:%S %Y")
+      elif len(fmtstr[i..^1]) >= 6 and fmtstr[i..i+5] == "rfc850":
+        return strptime(value, "%A, %d-%b-%y %H:%M:%S", twoDigitYearFlag=true)
+      elif len(fmtstr[i..^1]) >= 7 and fmtstr[i..i+6] == "rfc1123":
+        return strptime(value, "%a, %d %b %Y %H:%M:%S")
+      elif len(fmtstr[i..^1]) >= 7 and fmtstr[i..i+6] == "rfc3339":
+        return strptime(value, "%Y-%m-%dT%H:%M:%S")
+      elif len(fmtstr[i..^1]) >= 7 and fmtstr[i..i+6] == "asctime":
+        return strptime(value, "%a %b %d %T %Y")
+      else:
+        discard
+    inc(i)
+  if isISOWeekDate:
+    result = fromOrdinal(toOrdinalFromISO(ISOWeekDate(year: y, week: week, weekday: weekday)))
+  else:
+    let utcOffset = hoff * 3600 + moff * 60 + soff
+    result = initDateTime(y, m, d, h, mi, s, ms, utcoffset = -utcOffset)
+
+
+
 proc strftime*(dt: DateTime, fmtstr: string, tzinfo: TZInfo = nil): string =
   ## a limited reimplementation of strftime, mainly based
   ## on the version implemented in lua, with some influences
@@ -2587,9 +2870,9 @@ proc strftime*(dt: DateTime, fmtstr: string, tzinfo: TZInfo = nil): string =
             result.add("Z")
           else:
             if utcoffset < 0:
-              result.add("-")
-            else:
               result.add("+")
+            else:
+              result.add("-")
             let offset = abs(utcoffset)
             let hr = offset div 3600
             let mn = (offset mod 3600) div 60
@@ -4080,3 +4363,10 @@ when isMainModule:
   echo "easter date next 10 years:"
   for i in 1..10:
     echo easter((current + i.years).year).strftime("$iso, $asctime, $wiso")
+
+  let nnow = initZonedDateTime(now(), tzinfo=initTZInfo("Europe/Paris", tzOlson))
+  echo nnow.strftime("$rfc3339")
+  echo strptime($nnow, "%y %m %d %H %M %S.%f %z")
+  echo strptime(nnow.strftime("$wiso"), "$wiso")
+  echo strptime(nnow.strftime("$iso"), "$iso")
+
