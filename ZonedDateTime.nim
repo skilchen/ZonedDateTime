@@ -78,7 +78,10 @@ when not defined(js):
   import struct
   import os, ospaths
 
-type TimeZoneError* = object of Exception
+type
+  TimeZoneError* = object of Exception
+  NonExistentTimeError* = object of Exception
+  AmbiguousTimeError* = object of Exception
 
 type
   TZFileHeader* = object ## Header of a compiled Olson TZ file
@@ -242,15 +245,17 @@ proc fromTimeStamp*(ts: TimeStamp): DateTime {.gcsafe.}
 proc toTimeStamp*(dt: DateTime): TimeStamp {.gcsafe.}
 proc localFromTime*(t: SomeNumber, zoneInfo: TZInfo = nil): DateTime {.gcsafe.}
 proc getTZInfo(tzname: string, tztype: TZType = tzPosix): TZInfo {.gcsafe.}
-proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
-proc setTimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
-proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe}
+proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix, is_utc = false, prefer_dst = false): DateTime {.gcsafe.}
+proc setTimezone*(dt: DateTime, tzinfo: TZInfo, is_utc = false, prefer_dst = false): DateTime {.gcsafe.}
+proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo, is_utc = false, prefer_dst = false): ZonedDateTime {.gcsafe}
 proc astimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime {.gcsafe.}
 proc astimezone*(dt: DateTime, tzinfo: TZInfo): DateTime {.gcsafe.}
 proc astimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime {.gcsafe.}
 proc getWeekDay*(dt: DateTime): int {.gcsafe.}
 proc toOrdinal*(dt: DateTime): int64 {.gcsafe.}
 proc fromOrdinal*(ordinal: int64): DateTime {.gcsafe.}
+proc initTimeInterval*(years, months, days, hours, minutes, seconds, microseconds: float64 = 0;
+                       calculated = false): TimeInterval {.gcsafe.}
 
 proc `+`*(dt: DateTime, ti: TimeInterval): DateTime {.gcsafe.}
 proc `+`*(dt: DateTime, ts: TimeStamp): DateTime {.gcsafe.}
@@ -259,14 +264,14 @@ proc `+`*(zdt: ZonedDateTime, ts: TimeStamp): ZonedDateTime {.gcsafe.}
 proc `+`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
 proc `-`*(dt: DateTime, td: TimeDelta): DateTime {.gcsafe.}
 proc `-`*(x, y: DateTime): TimeDelta {.gcsafe.}
-
+proc `-`*(zdt: ZonedDateTime, ti: TimeInterval): ZonedDateTime {.gcsafe.}
 
 when defined(useLeapSeconds):
   proc find_leapseconds*(tzinfo: TZInfo, epochSeconds: float64): int {.gcsafe.}
 
 
 proc ifloor*[T](n: T): int =
-  ## Return the whole part of m/n.
+  ## Return the whole part of n.
   return int(floor(n.float64))
 
 
@@ -475,51 +480,54 @@ proc initTZInfo*(tzname: string, tztype = tzPosix): TZInfo =
   getTZInfo(tzname, tztype)
 
 
+proc days*(d: SomeNumber): TimeInterval {.nimcall inline.}
+
+
+proc initZonedDateTime*(dt: DateTime, tzinfo: TZInfo, from_utc = false, prefer_dst = false): ZonedDateTime =
+  if dt.offsetKnown:
+    result.datetime = setTimeZone(dt, tzinfo, true, prefer_dst)
+    result.tzinfo = tzinfo
+  else:
+    result.datetime = setTimezone(dt, tzinfo, false, prefer_dst)
+    result.tzinfo = tzinfo
+  if from_utc:
+    let ti = initTimeInterval(seconds = float64(result.datetime.utcoffset - int(result.datetime.isDst) * 3600))
+    result = result - ti
+
 proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                         utcoffset: int = 0, isDST: bool = false, offsetKnown = false;
-                        tzname = ""): ZonedDateTime =
-  result.datetime = initDateTime(year, month, day, hour, minute, second, microsecond,
+                        tzname = "", from_utc = false, prefer_dst = false): ZonedDateTime =
+  let datetime = initDateTime(year, month, day, hour, minute, second, microsecond,
                                  utcoffset, isDST, offsetKnown)
+  var tzinfo: TZInfo
   if tzname == "":
-    result.datetime = setTimeZone(result.datetime, "UTC0")
+    tzinfo = initTZInfo("UTC0", tzPosix)
   else:
     try:
-      result.datetime = setTimeZone(result.datetime, tzname)
+      tzinfo = initTZInfo(tzname, tzOlson)
     except:
-      result.datetime = setTimeZone(result.datetime, "UTC0", tzPosix)
+      echo getCurrentExceptionMsg()
+      raise getCurrentException()
 
-
-proc initZonedDateTime*(dt: DateTime, tzinfo: TZInfo): ZonedDateTime =
-  if dt.offsetKnown:
-    result.datetime = setTimeZone(dt, tzinfo)
-    result.tzinfo = tzinfo
-  else:
-    var dttmp = dt
-    dttmp.day = 0
-    result.datetime = setTimezone(dttmp, tzinfo)
-    result.tzinfo = tzinfo
-    result.datetime = result.datetime + initTimeDelta(days = dt.day)
+  result = initZonedDateTime(datetime, tzinfo, from_utc, prefer_dst)
 
 
 proc initZonedDateTime*(year, month, day, hour, minute, second, microsecond: int = 0;
                         utcoffset: int = 0, isDST: bool = false, offsetKnown = false;
-                        tzinfo: TZInfo = nil ): ZonedDateTime =
-  result.datetime = initDateTime(year, month, 0, hour, minute, second, microsecond,
-                                 utcoffset, isDST, offsetKnown)
+                        tzinfo: TZInfo = nil, from_utc = false, prefer_dst = false ): ZonedDateTime =
+  let datetime = initDateTime(year, month, day, hour, minute, second, microsecond,
+                              utcoffset, isDST, offsetKnown)
 
-  if not isNil(tzInfo):
-    result.datetime = setTimezone(result.datetime, tzInfo)
+  result= initZonedDateTime(datetime, tzinfo, from_utc, prefer_dst)
 
-  result.tzinfo = tzinfo
-  result.datetime = result.datetime + initTimeDelta(days = day)
-
-
-proc initZonedDateTime*(dt: DateTime, tzname: string): ZonedDateTime =
+proc initZonedDateTime*(dt: DateTime, tzname: string, from_utc = false, prefer_dst = false): ZonedDateTime =
   result.datetime = dt
+  var tzinfo: TZInfo
   try:
-    result.datetime = setTimeZone(result.datetime, tzname)
+    tzinfo = initTZInfo(tzname, tzPosix)
   except:
-    result.datetime = setTimeZone(result.datetime, "UTC0", tzPosix)
+    tzinfo = initTZInfo(tzname, tzOlson)
+  result = initZonedDateTime(dt, tzinfo, from_utc, prefer_dst)
 
 
 proc `year`*(zdt: ZonedDateTime): int =
@@ -770,7 +778,7 @@ proc hours*(h: SomeNumber): TimeInterval {.inline.} =
   initTimeInterval(hours = h.float64)
 
 
-proc days*(d: SomeNumber): TimeInterval {.inline.} =
+proc days*(d: SomeNumber): TimeInterval =
   ## TimeInterval of `d` days
   ##
   ## ``echo now() + 2.days``
@@ -1960,6 +1968,14 @@ iterator countUp*(dtstart, dtend: DateTime, step: TimeInterval): DateTime =
     current = dtstart + (step * i)
     inc(i)
 
+iterator countUp*(dtstart, dtend: ZonedDateTime, step: TimeInterval): ZonedDateTime =
+  var current = dtstart
+  var i = 1
+  while current <= dtend:
+    yield current
+    current = dtstart + (step * i)
+    inc(i)
+
 iterator countDown*(dtstart, dtend: DateTime, step: TimeInterval): DateTime =
   var current = dtstart
   var i = 1
@@ -1968,6 +1984,14 @@ iterator countDown*(dtstart, dtend: DateTime, step: TimeInterval): DateTime =
     current = dtstart + (step * -i)
     inc(i)
 
+
+iterator countDown*(dtstart, dtend: ZonedDateTime, step: TimeInterval): ZonedDateTime =
+  var current = dtstart
+  var i = 1
+  while current >= dtend:
+    yield current
+    current = dtstart + (step * -i)
+    inc(i)
 
 proc now*(): DateTime =
   ## get a DateTime instance having the current date
@@ -3585,7 +3609,8 @@ when not defined(js):
     else:
       raise newException(IOError, "failed to open ZIP: " & zipname)
 
-  proc find_transition*(tdata: TZFileData, epochSeconds: int): TransitionInfo =
+
+  proc find_transition*(tdata: TZFileData, epochSeconds: int, is_utc=true): TransitionInfo =
     ## finds the closest DST transition before a time expressed
     ## in seconds since 1970-01-01T00:00:00 UTC.
     ##
@@ -3603,13 +3628,40 @@ when not defined(js):
       idx = 0
     result.time = d[idx]
     result.data = tdata.timeInfos[tdata.timeInfoIdx[idx]]
+    if not is_utc:
+      echo "gmtoff: ", result.data.gmtoff
+      echo "epochSeconds: ", fromUnixEpochSeconds(float(epochSeconds)), " transition time: ", fromUnixEpochSeconds(d[idx].float64)
+      if epochSeconds - result.data.gmtoff < d[idx]:
+        raise newException(NonExistentTimeError, "time does not exist in timezone")
 
-  proc find_transition*(tdata: TZFiledata, dt: DateTime): TransitionInfo =
+  proc find_transition_idx_range*(tdata: TZFileData, epochseconds: int, is_utc=false): (int, int) =
+    let d = tdata.transitionTimes
+    let earliest = epochseconds - 86400
+    let latest = epochseconds + 86400
+    var lo = 0
+    var hi = len(d)
+    while lo < hi:
+      let mid = (lo + hi) div 2
+      if earliest < d[mid]:
+        hi = mid
+      else:
+        lo = mid + 1
+    var start = lo - 1
+    if start < 0:
+      start = 0
+    var finish = len(d) - 1
+    for i in start..finish:
+      if d[i] > latest:
+        finish = i - 1
+        break
+    result[0] = start
+    result[1] = finish
+
+  proc find_transition*(tdata: TZFiledata, zdt: ZonedDateTime, is_utc = true): TransitionInfo =
     ## finds the closest DST transition before `dt`
     ##
-    var seconds = toUnixEpochSeconds(dt)
-    let utc_seconds = seconds + float64(dt.utcOffset - int(dt.isDST) * 3600)
-    result = find_transition(tdata, int(utc_seconds))
+    var utc_seconds = int(toUnixEpochSeconds(zdt.datetime))
+    result = find_transition(tdata, utc_seconds, is_utc)
 
 
   when defined(useLeapSeconds):
@@ -3990,8 +4042,46 @@ type TZInfoData = object
   isDst: bool
   zoneAbbrev: string
 
-proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo): TZInfoData =
-  let t = toUTCTime(dt)
+# proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo, is_utc = false, prefer_dst = false): TZInfoData =
+#   let t = toUTCTime(dt)
+#   if not isNil zoneInfo:
+#     case zoneInfo.kind
+#     of tzOlson:
+#       when defined(js):
+#         raise newException(TimeZoneError, "Olson timezone files not supported on js backend")
+#       else:
+#         var odata = zoneInfo[].olsonData
+#         var idx = 0
+#         if odata.version == 2:
+#           idx = 1
+#         let trdata = odata.transitionData[idx]
+#         let ti = find_transition(trdata, int(t))
+#         result.utcOffset = -ti.data.gmtoff
+#         if ti.data.isdst == 1:
+#           result.utcOffset += 3600
+#           result.isDST = true
+#         result.zoneAbbrev = ti.data.abbrev
+#     of tzPosix:
+#       var pdata = zoneInfo.posixData
+#       let ti = find_transition(addr(pdata), float64(t))
+#       if isNil(ti):
+#         # no DST transition rule found
+#         result.utcOffset = pdata.utcoffset
+#         result.isDST = false
+#         result.zoneAbbrev = pdata.stdName
+#       else:
+#         # we found a DST transition rule
+#         if t.float64 >= toUnixEpochSeconds(ti.dstStart) and t.float64 < toTime(ti.dstEnd):
+#           result.utcOffset = pdata.utcOffset
+#           result.isDST = true
+#           result.zoneAbbrev = pdata.dstName
+#         else:
+#           result.utcOffset = pdata.utcOffset
+#           result.isDST = false
+#           result.zoneAbbrev = pdata.stdName
+
+proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo, is_utc=true, prefer_dst = false): TZInfoData =
+  let t = toUTCTime(dt).int64
   if not isNil zoneInfo:
     case zoneInfo.kind
     of tzOlson:
@@ -4003,12 +4093,43 @@ proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo): TZInfoData =
         if odata.version == 2:
           idx = 1
         let trdata = odata.transitionData[idx]
-        let ti = find_transition(trdata, int(t))
-        result.utcOffset = -ti.data.gmtoff
-        if ti.data.isdst == 1:
-          result.utcOffset += 3600
-          result.isDST = true
-        result.zoneAbbrev = ti.data.abbrev
+        var ti: TransitionInfo
+        if is_utc:
+          ti = find_transition(trdata, int(t), is_utc)
+          result.utcOffset = -ti.data.gmtoff
+          if ti.data.isdst == 1:
+            result.utcOffset += 3600
+            result.isDST = true
+          result.zoneAbbrev = ti.data.abbrev
+        else:
+          let (start, finish) = find_transition_idx_range(trdata, int(t))
+          #echo "start: ", start, " finish: ", finish
+          let trtimes = trdata.transitionTimes
+          let trlen = len(trtimes) - 1
+          var possible: seq[TZInfoData] = @[]
+          for i in start..finish:
+            let data = trdata.timeInfos[trdata.timeInfoIdx[i]]
+            let utc_dt = t - data.gmtoff
+            if utc_dt >= trtimes[i] and (i == trlen or utc_dt < trtimes[i + 1]):
+              let zone = TZInfoData(zoneAbbrev: data.abbrev,
+                                    utcoffset: if data.isdst > 0: -data.gmtoff + 3600 else: -data.gmtoff,
+                                    isDst: data.isdst > 0)
+              possible.add(zone)
+          case len(possible)
+          of 1:
+            result = possible[0]
+          of 0:
+            raise newException(NonExistentTimeError, "time does not exist in timezone")
+          else:
+            if prefer_dst:
+              for i in possible:
+                if i.isDST:
+                  return i
+            else:
+              for i in possible:
+                if not i.isDST:
+                  return i
+            raise newException(AmbiguousTimeError, "time is ambiguous in timezone")
     of tzPosix:
       var pdata = zoneInfo.posixData
       let ti = find_transition(addr(pdata), float64(t))
@@ -4029,8 +4150,8 @@ proc getCurrentTZData*(dt: DateTime, zoneInfo: TZInfo): TZInfoData =
           result.zoneAbbrev = pdata.stdName
 
 
-proc setTimeZone*(dt: DateTime, tzinfo: TZInfo): DateTime =
-  let tzdata = getCurrentTZData(dt, tzinfo)
+proc setTimeZone*(dt: DateTime, tzinfo: TZInfo, is_utc = false, prefer_dst = false): DateTime =
+  let tzdata = getCurrentTZData(dt, tzinfo, is_utc, prefer_dst)
   result = dt
   result.utcOffset = tzdata.utcOffset
   result.isDST = tzdata.isDST
@@ -4038,7 +4159,8 @@ proc setTimeZone*(dt: DateTime, tzinfo: TZInfo): DateTime =
   result.offsetKnown = true
 
 
-proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateTime =
+proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix,
+                  is_utc = false, prefer_dst = false): DateTime =
   ## return a `DateTime` with the same date/time as `dt` but with the timezone settings
   ## changed to `tzname` of zone type `tztype`
   ##
@@ -4052,7 +4174,7 @@ proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateT
         tzinfo = getTZInfo(tzname, tzOlson)
       else:
         tzinfo = getTZInfo(tzname, tzPosix)
-      result = setTimeZone(dt, tzinfo)
+      result = setTimeZone(dt, tzinfo, is_utc, prefer_dst)
     except:
       when defined(js):
         # to silence a warning abount GC-unsafety
@@ -4064,7 +4186,8 @@ proc setTimezone*(dt: DateTime, tzname: string, tztype: TZType = tzPosix): DateT
       result = dt
 
 
-proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix): ZonedDateTime =
+proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix,
+                 is_utc = false, prefer_dst = false): ZonedDateTime =
   ## return a `ZonedDateTime` with the same date/time as `zdt` but with the timezone settings
   ## changed to `tzname` of zone type `tztype`
   ##
@@ -4072,14 +4195,14 @@ proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix):
   var tzinfo: TZInfo
   try:
     result.tzinfo = getTZInfo(tzname, tztype)
-    result.datetime = setTimeZone(dt, tzinfo)
+    result.datetime = setTimeZone(dt, tzinfo, is_utc, prefer_dst)
   except:
     try:
       if tzType == tzPosix:
         result.tzinfo = getTZInfo(tzname, tzOlson)
       else:
         result.tzinfo = getTZInfo(tzname, tzPosix)
-      result.datetime = setTimeZone(dt, tzinfo)
+      result.datetime = setTimeZone(dt, tzinfo, is_utc, prefer_dst)
     except:
       when defined(js):
         # to silence a warning abount GC-unsafety
@@ -4091,13 +4214,13 @@ proc setTimezone*(zdt: ZonedDateTime, tzname: string, tztype: TZType = tzPosix):
       result = zdt
 
 
-proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo): ZonedDateTime =
+proc setTimezone*(zdt: ZonedDateTime, tzinfo: TZInfo, is_utc = false, prefer_dst = false): ZonedDateTime =
   ## return a `ZonedDateTime` with the same date/time as `zdt` but with the timezone settings
   ## changed to timezone settings `tzinfo`
   ##
   let dt = zdt.datetime
   try:
-    result.datetime = setTimeZone(dt, tzinfo)
+    result.datetime = setTimeZone(dt, tzinfo, is_utc, prefer_dst)
     result.tzinfo = tzinfo
   except:
     when defined(js):
